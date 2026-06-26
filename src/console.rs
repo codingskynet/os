@@ -21,7 +21,8 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\n"));
     ($($arg:tt)*) => ({
-        $crate::console::_print(format_args_nl!($($arg)*));
+        // well optimized even raw "\n" <https://github.com/rust-lang/rust/pull/97658#issuecomment-1530505696>
+        $crate::console::_print(format_args!("{}\n", format_args!($($arg)*)));
     })
 }
 
