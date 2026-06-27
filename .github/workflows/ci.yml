@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  ARCH: riscv64gc-unknown-none-elf
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-25
+          targets: ${{ env.ARCH }}
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Format (rustfmt)
+        run: cargo fmt --check
+
+      - name: Lint (clippy)
+        run: cargo clippy --target=${{ env.ARCH }} --release -- -D warnings
+
+      - name: Test (host)
+        run: cargo test --lib
+
+      - name: Check (full build verification)
+        run: cargo check --target=${{ env.ARCH }} --release
