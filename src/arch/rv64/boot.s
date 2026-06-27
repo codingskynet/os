@@ -71,7 +71,15 @@
  *
  * ============================================================================ */
 
-.equ STACK_SIZE, 8192
+.equ STACK_SIZE,     8192
+
+/* ---------------------------------------------------------------------------
+ *  BOOT ENTRY — the Rust entry-point symbol.
+ *
+ *  Override by defining `BOOT_ENTRY` before including this file:
+ *      .equiv BOOT_ENTRY, my_other_entry
+ * ------------------------------------------------------------------------- */
+.equ BOOT_ENTRY, _start_rust
 
 .global _start
 
@@ -84,8 +92,17 @@ _start:
     add  sp, sp, t0                 # move the current hart stack pointer
                                     # to its place in the stack space
 
+    # pass hart_id and DTB pointer to Rust according to the QEMU boot convention.
+    #
+    # QEMU's -bios none -kernel mode jumps to _start with:
+    #   a0 = mhartid  (boot hart id)
+    #   a1 = DTB physical address (Flattened Device Tree blob)
+    #
+    # Re-read a0 from the CSR (idempotent), leave a1 untouched so the
+    # device-tree pointer survives until _start_rust.
+    csrr a0, mhartid                # a0 = hart id (from CSR, same as what QEMU set)
+
     # park harts with id != 0
-    csrr a0, mhartid                # read current hart id
     bnez a0, park                   # if we're not on the hart 0
                                     # we park the hart
 
@@ -98,7 +115,20 @@ _start:
     j    1b                         # loop
 2:
 
-    j    _start_rust                # hart 0 jump to rust
+    j    BOOT_ENTRY                 # hart 0 jump to rust
+
+/* ---------------------------------------------------------------------------
+ *  Secondary hart parking
+ *
+ *  Harts with id != 0 are parked here in WFI.  Later, when SMP bring-up is
+ *  implemented, the primary hart can send an IPI or store a spin-table entry
+ *  that releases each parked hart.  The spin-table protocol (used by Linux)
+ *  polls a memory location; WFI is a gentler default.
+ * ------------------------------------------------------------------------- */
+.secondary_entry:
+    /* a0 already holds mhartid from the common path above.
+     * SMP bring-up will redirect harts here instead of park. */
+    j    BOOT_ENTRY
 
 park:
     wfi

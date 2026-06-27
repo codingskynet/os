@@ -1,5 +1,5 @@
 [package]
-name = "YukiOS"
+name = "os"
 version = "0.1.0"
 edition = "2024"
 
@@ -13,5 +13,19 @@ virt = []
 [[bin]]
 name = "kernel"
 path = "src/main.rs"
+test = false
+bench = false
+
+[lib]
+name = "os"
+path = "src/lib.rs"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
 
 [dependencies]
+thiserror = { version = "2", default-features = false }
+winnow = { version = "1.0.3", default-features = false, features = ["binary"] }
