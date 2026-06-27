@@ -1,7 +1,9 @@
+use core::ffi::CStr;
 use core::{slice, str};
 
 use winnow::binary::be_u32;
-use winnow::token::take;
+use winnow::error::{ContextError, ErrMode};
+use winnow::token::{take, take_until};
 use winnow::{ModalResult, Parser, Stateful};
 
 // Safety: the caller must ensure `buf.offset(offset)..buf.offset(offset + 4)` is readable.
@@ -273,11 +275,17 @@ impl<'a> Iterator for FdtWalker<'a> {
         fn resolve_name<'a>(
             input: &mut Stateful<&'a [u8], FdtWalkerState<'a>>,
             nameoff: u32,
-        ) -> &'a str {
-            let nameoff = nameoff as usize;
-            let strings = input.state.strings_slice;
-            let len = strings[nameoff..].iter().position(|&b| b == 0).unwrap();
-            str::from_utf8(&strings[nameoff..(nameoff + len)]).unwrap()
+        ) -> ModalResult<&'a str> {
+            unsafe {
+                let strings = input.state.strings_slice;
+                if nameoff as usize >= strings.len() {
+                    return Err(ErrMode::Cut(ContextError::new()));
+                }
+
+                CStr::from_ptr(strings.as_ptr().offset(nameoff as isize))
+                    .to_str()
+                    .map_err(|_| ErrMode::Cut(ContextError::new()))
+            }
         }
 
         fn align4(input: &mut Stateful<&[u8], FdtWalkerState>) -> ModalResult<()> {
@@ -287,14 +295,9 @@ impl<'a> Iterator for FdtWalker<'a> {
         }
 
         fn parse_cstr<'a>(input: &mut Stateful<&'a [u8], FdtWalkerState>) -> ModalResult<&'a str> {
-            let Some(len) = input.input.iter().position(|&b| b == 0) else {
-                return Err(winnow::error::ErrMode::Cut(
-                    winnow::error::ContextError::new(),
-                ));
-            };
-            let str = take(len).parse_next(input)?;
+            let str = take_until(0.., 0).parse_next(input)?;
             let _ = take(1_usize).parse_next(input)?;
-            Ok(str::from_utf8(str).unwrap())
+            str::from_utf8(str).map_err(|_| ErrMode::Cut(ContextError::new()))
         }
 
         fn parse_event<'a>(
@@ -310,7 +313,9 @@ impl<'a> Iterator for FdtWalker<'a> {
                         return Ok(Some(FdtToken::Node(name)));
                     }
                     FDT_END_NODE => {
-                        // TODO: if input.state.depth == 0, raise
+                        if input.state.depth == 0 {
+                            return Err(ErrMode::Cut(ContextError::new()));
+                        }
                         input.state.depth -= 1;
                         return Ok(Some(FdtToken::NodeEnd));
                     }
@@ -320,16 +325,14 @@ impl<'a> Iterator for FdtWalker<'a> {
                         let value = take(len).parse_next(input)?;
                         align4(input)?;
                         return Ok(Some(FdtToken::Prop {
-                            name: resolve_name(input, nameoff),
+                            name: resolve_name(input, nameoff)?,
                             value,
                         }));
                     }
                     FDT_NOP => {}
                     FDT_END => return Ok(None),
                     _ => {
-                        return Err(winnow::error::ErrMode::Cut(
-                            winnow::error::ContextError::new(),
-                        ));
+                        return Err(ErrMode::Cut(ContextError::new()));
                     }
                 }
             }

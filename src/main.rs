@@ -5,4 +5,3 @@ pub mod arch;
 pub mod console;
 pub mod dev;
 pub mod kernel;
-pub mod machine;

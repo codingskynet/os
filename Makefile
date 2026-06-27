@@ -1,5 +1,5 @@
 ARCH      ?= riscv64gc-unknown-none-elf
-LINKER_SCRIPT := src/machine/rv64/kernel.ld
+LINKER_SCRIPT := src/arch/rv64/kernel.ld
 
 TARGET_DIR := target/$(ARCH)/release
 KERNEL_ELF := $(TARGET_DIR)/kernel

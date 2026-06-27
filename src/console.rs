@@ -106,5 +106,5 @@ pub enum Error {
     #[error("Invalid utf8")]
     InvalidUtf8(#[from] str::Utf8Error),
     #[error("Invalid slice")]
-    Invalidslice(#[from] TryFromSliceError),
+    InvalidSlice(#[from] TryFromSliceError),
 }
