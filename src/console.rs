@@ -1,4 +1,3 @@
-use core::array::TryFromSliceError;
 use core::cell::UnsafeCell;
 use core::ffi::CStr;
 use core::fmt::{self, Write};
@@ -57,7 +56,7 @@ pub unsafe fn install_from_fdt(fdt: &Fdt) -> Result<(), Error> {
         let Some(stdout_path) = fdt.query().at("chosen").prop("stdout-path") else {
             return Err(Error::NotFound);
         };
-        let stdout_path = CStr::from_ptr(stdout_path.as_ptr()).to_str()?;
+        let stdout_path = CStr::from_bytes_until_nul(stdout_path)?.to_str()?;
 
         // strip optional colon+options suffix, e.g. "/soc/serial@10000000:57600"
         let path = stdout_path.split(':').next().unwrap_or("");
@@ -75,7 +74,7 @@ pub unsafe fn install_from_fdt(fdt: &Fdt) -> Result<(), Error> {
         let Some((compatible, reg)) = compatible.zip(reg) else {
             return Err(Error::NotFound);
         };
-        let compatible = CStr::from_ptr(compatible.as_ptr());
+        let compatible = CStr::from_bytes_until_nul(compatible)?;
 
         // install console for known devices
         if [c"ns16550", c"ns16550a"].contains(&compatible) {
@@ -103,8 +102,8 @@ pub unsafe fn install_from_fdt(fdt: &Fdt) -> Result<(), Error> {
 pub enum Error {
     #[error("Not found")]
     NotFound,
+    #[error("Invalid c string")]
+    InvalidCStr(#[from] core::ffi::FromBytesUntilNulError),
     #[error("Invalid utf8")]
     InvalidUtf8(#[from] str::Utf8Error),
-    #[error("Invalid slice")]
-    InvalidSlice(#[from] TryFromSliceError),
 }

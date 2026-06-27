@@ -2,7 +2,7 @@ use core::ffi::CStr;
 use core::{slice, str};
 
 use winnow::binary::be_u32;
-use winnow::error::{ContextError, ErrMode};
+use winnow::error::{ContextError, ErrMode, FromExternalError};
 use winnow::token::{take, take_until};
 use winnow::{ModalResult, Parser, Stateful};
 
@@ -272,20 +272,24 @@ impl<'a> Iterator for FdtWalker<'a> {
     type Item = FdtToken<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        macro_rules! ctx_err {
+            ($input:expr, $e:expr) => {{ $e.map_err(|e| ErrMode::Cut(ContextError::from_external_error($input, e))) }};
+        }
+
         fn resolve_name<'a>(
             input: &mut Stateful<&'a [u8], FdtWalkerState<'a>>,
             nameoff: u32,
         ) -> ModalResult<&'a str> {
-            unsafe {
-                let strings = input.state.strings_slice;
-                if nameoff as usize >= strings.len() {
-                    return Err(ErrMode::Cut(ContextError::new()));
-                }
-
-                CStr::from_ptr(strings.as_ptr().offset(nameoff as isize))
-                    .to_str()
-                    .map_err(|_| ErrMode::Cut(ContextError::new()))
+            let strings = input.state.strings_slice;
+            if nameoff as usize >= strings.len() {
+                return Err(ErrMode::Cut(ContextError::new()));
             }
+
+            let cstr = ctx_err!(
+                input,
+                CStr::from_bytes_until_nul(&strings[nameoff as usize..])
+            )?;
+            ctx_err!(input, cstr.to_str())
         }
 
         fn align4(input: &mut Stateful<&[u8], FdtWalkerState>) -> ModalResult<()> {
@@ -297,7 +301,7 @@ impl<'a> Iterator for FdtWalker<'a> {
         fn parse_cstr<'a>(input: &mut Stateful<&'a [u8], FdtWalkerState>) -> ModalResult<&'a str> {
             let str = take_until(0.., 0).parse_next(input)?;
             let _ = take(1_usize).parse_next(input)?;
-            str::from_utf8(str).map_err(|_| ErrMode::Cut(ContextError::new()))
+            ctx_err!(input, str::from_utf8(str))
         }
 
         fn parse_event<'a>(
