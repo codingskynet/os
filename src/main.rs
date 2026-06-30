@@ -7,5 +7,6 @@ mod console;
 mod dev;
 mod init;
 mod kernel;
+mod mm;
 mod panic;
 mod util;

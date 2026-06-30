@@ -4,7 +4,7 @@
     "rust-analyzer.check.allTargets": false,
     "rust-analyzer.check.command": "check",
     "rust-analyzer.cargo.targetDir": "target/rust-analyzer",
-    "rust-analyzer.rustfmt.extraArgs": [
-        "+nightly"
+    "rust-analyzer.rustfmt.overrideCommand": [
+        "./scripts/rustfmt"
     ]
 }

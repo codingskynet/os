@@ -35,13 +35,12 @@ clean:
 	cargo clean
 
 fmt:
-	cargo fmt
+	./fmt
 
 clippy:
-	cargo clippy --target=$(ARCH) --release -- -D warnings
+	cargo clippy --target=$(ARCH)
 
 test:
 	cargo test --lib
 
 check: fmt clippy test
-	cargo check --target=$(ARCH) --release

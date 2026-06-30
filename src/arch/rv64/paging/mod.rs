@@ -1,18 +1,31 @@
-mod addr;
 mod page_table;
 
 use core::arch::asm;
+use core::mem::MaybeUninit;
+use core::ptr;
 
-use crate::arch::rv64::paging::addr::HIGHER_HALF_OFFSET;
-use crate::arch::rv64::paging::page_table::{PageTable, PteFlags, SATP_MODE_SV39, ppn, vpn2};
-use crate::util::r#const::G;
+use page_table::{PageTable, PteFlags, SATP_MODE_SV39, ppn, vpn0, vpn1, vpn2};
 
-const DIRECT_MAP_SIZE: usize = 256 * G;
+use super::consts::*;
+use crate::console::{CONSOLE, Console};
+use crate::dev::uart::ns16550::NS16550;
+use crate::mm::addr::{Pa, Va};
+use crate::util::consts::G;
+
+const DIRECT_MAP_SIZE: usize = 128 * G;
 
 // Temporary Sv39 root page table using 1GiB leaf mappings.
 static mut TEMP: PageTable = PageTable::new();
 
-pub unsafe fn enable_mmu() {
+#[cfg(not(target_arch = "riscv64"))]
+pub unsafe fn enable_mmu_and_jump(_entry: usize, _hart_id: usize, _dtb_pa: usize) -> ! {
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(target_arch = "riscv64")]
+pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_pa: usize) -> ! {
     unsafe {
         // Build a temporary bootstrap address space with two 1GiB-leaf windows:
         //
@@ -31,45 +44,87 @@ pub unsafe fn enable_mmu() {
         // references to a `static mut`.
         let temp = &raw mut TEMP;
 
-        let mut address = 0;
+        let mut address = Pa::new(0);
         let flag =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::A | PteFlags::D;
-        while address < DIRECT_MAP_SIZE {
+        while address < Pa::new(DIRECT_MAP_SIZE) {
             (*temp)
-                .entry(vpn2(address))
+                .entry(vpn2(Va::new(address.as_raw()))) // identical mapping
                 .mut_address(address)
                 .mut_flags(flag);
             (*temp)
-                .entry(vpn2(address + HIGHER_HALF_OFFSET))
+                .entry(vpn2(address.to_va()))
                 .mut_address(address)
                 .mut_flags(flag);
-            address += G;
+            address = address.checked_offset(G).unwrap();
         }
 
-        let satp = SATP_MODE_SV39 | ppn(temp as *const PageTable as usize);
+        let satp = SATP_MODE_SV39 | ppn(Pa::new(temp as usize));
         asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
         asm!("csrw satp, {}", in(reg) satp, options(nostack, preserves_flags));
         asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
 
-        // Switch the current instruction stream from the low identity alias to
-        // the higher-half alias. The label address produced by `lla` is still
-        // the link/load address, so add HIGHER_HALF_OFFSET and jump there.
-        //
-        // After the jump, execution resumes at label 2 through the higher-half
-        // mapping. The temporary identity map intentionally remains installed
-        // until a final kernel page table can remove it.
-        //
-        // The stack pointer is not adjusted here; it still uses the low
-        // identity alias until a later boot step moves the stack to its
-        // higher-half address.
+        let entry = entry.checked_add(DIRECT_MAP_ADDR).expect("Invalid entry");
+
+        // Enter the direct-map world without returning through the low-address
+        // call stack. The temporary identity map exists only to execute the
+        // instructions between `csrw satp` and this jump.
         asm!(
-            "lla  {target}, 2f",
-            "add  {target}, {target}, {offset}",
-            "jr   {target}",
-            "2:",
-            target = out(reg) _,
-            offset = in(reg) HIGHER_HALF_OFFSET,
-            options(nostack),
+            "add sp, sp, t1",
+            "jr  t0",
+            in("t0") entry,
+            in("t1") DIRECT_MAP_ADDR,
+            in("a0") hart_id,
+            in("a1") dtb_pa,
+            clobber_abi("C"),
+            options(noreturn),
         );
+    }
+}
+
+pub unsafe fn init_page_table(
+    start: Pa,
+    end: Pa,
+    mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>,
+) {
+    unsafe {
+        let l2 = alloc().write(PageTable::default());
+
+        let flags =
+            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::A | PteFlags::D;
+
+        let mut addr = start.to_va();
+        while addr < end.to_va() {
+            let pa = addr.to_pa();
+            let l1 = l2.entry(vpn2(addr)).or_insert_with(|| alloc().as_mut_ptr());
+            let l0 = l1.entry(vpn1(addr)).or_insert_with(|| alloc().as_mut_ptr());
+            l0.entry(vpn0(addr))
+                .mut_address(pa)
+                .mut_flags(flags);
+
+            let identity = Va::new(pa.as_raw());
+            let l1 = l2.entry(vpn2(identity)).or_insert_with(|| alloc().as_mut_ptr());
+            let l0 = l1.entry(vpn1(identity)).or_insert_with(|| alloc().as_mut_ptr());
+            l0.entry(vpn0(identity)).mut_address(pa).mut_flags(flags);
+
+            addr = addr.checked_offset(PAGE_SIZE.get()).unwrap();
+        }
+
+        // TODO: generalize from reading FDT with MMIO_MAP_ADDR
+        let pa = Pa::new(0x1000_0000);
+        let va = pa.to_va();
+        let l1 = l2.entry(vpn2(va)).or_insert_with(|| alloc().as_mut_ptr());
+        let l0 = l1.entry(vpn1(va)).or_insert_with(|| alloc().as_mut_ptr());
+        l0.entry(vpn0(va)).mut_address(pa).mut_flags(flags);
+
+        ptr::write(
+            CONSOLE.as_mut(),
+            Console::Ns16550(NS16550::new(va.as_raw())),
+        );
+
+        let satp = SATP_MODE_SV39 | ppn(Va::from(l2).to_pa());
+        asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
+        asm!("csrw satp, {}", in(reg) satp, options(nostack, preserves_flags));
+        asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
     }
 }

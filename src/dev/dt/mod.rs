@@ -1,3 +1,5 @@
+pub mod memory;
+
 use core::ffi::CStr;
 use core::{slice, str};
 
@@ -86,8 +88,7 @@ pub struct Fdt {
 }
 
 impl Fdt {
-    pub fn new(ptr: usize) -> Self {
-        let ptr = ptr as *const u8;
+    pub fn new(ptr: *const u8) -> Self {
         let header = FdtHeader::new(ptr);
         Self { ptr, header }
     }
@@ -455,7 +456,7 @@ mod tests {
     }
 
     fn qemu_fdt() -> Fdt {
-        Fdt::new(PA(QEMU_VIRT_DTB.as_ptr() as usize))
+        Fdt::new(QEMU_VIRT_DTB.as_ptr())
     }
 
     fn query(fdt: &Fdt) -> FdtWalker<'_> {

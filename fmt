@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -eu
+
+toolchain=$(sed -n '1p' .rustfmt-toolchain)
+cargo +"$toolchain" fmt "$@"

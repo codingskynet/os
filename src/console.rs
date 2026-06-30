@@ -1,10 +1,10 @@
-use core::cell::UnsafeCell;
 use core::ffi::CStr;
 use core::fmt::{self, Write};
 use core::{ptr, str};
 
 use crate::dev::dt::{Fdt, RegIter};
 use crate::dev::uart::ns16550::NS16550;
+use crate::util::Global;
 
 /// Prints without a newline.
 #[macro_export]
@@ -22,13 +22,10 @@ macro_rules! println {
 }
 
 pub fn _print(args: fmt::Arguments) {
-    unsafe {
-        CONSOLE.0.get().as_mut_unchecked().write_fmt(args).unwrap();
-    }
+    CONSOLE.as_mut().write_fmt(args).unwrap();
 }
 
-pub static CONSOLE: Global<Console> =
-    Global(UnsafeCell::new(Console::Ns16550(NS16550::new(0x10000000))));
+pub static CONSOLE: Global<Console> = Global::new(Console::Ns16550(NS16550::new(0x10000000)));
 
 pub enum Console {
     Ns16550(NS16550),
@@ -41,10 +38,6 @@ impl Write for Console {
         }
     }
 }
-
-// TODO: Dummy struct for simply impl CONSOLE, will be replaced spin lock.
-pub struct Global<T>(UnsafeCell<T>);
-unsafe impl<T> Sync for Global<T> {}
 
 /// Parse `stdout-path` from `/chosen` and install the matching console driver.
 ///

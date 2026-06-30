@@ -6,3 +6,5 @@
 
 #[cfg(feature = "rv64")]
 pub mod rv64;
+#[cfg(feature = "rv64")]
+pub use rv64::*;

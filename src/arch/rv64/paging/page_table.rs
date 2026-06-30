@@ -63,10 +63,18 @@
 
 use bitflags::bitflags;
 
-pub(super) const SATP_MODE_SV39: usize = 8 << 60;
+use crate::mm::addr::{Pa, Va};
+
+pub const SATP_MODE_SV39: usize = 8 << 60;
 
 #[repr(C, align(4096))]
 pub struct PageTable([PageTableEntry; 512]);
+
+impl Default for PageTable {
+    fn default() -> Self {
+        Self([PageTableEntry::default(); 512])
+    }
+}
 
 impl PageTable {
     pub const fn new() -> Self {
@@ -102,9 +110,9 @@ impl PageTableEntry {
     const PPN_MASK: usize = ((1 << 44) - 1) << 10;
 
     /// Store a page-aligned physical address, preserving flags and RSW
-    pub fn mut_address(&mut self, addr: usize) -> &mut Self {
+    pub fn mut_address(&mut self, addr: Pa) -> &mut Self {
         let low = self.0 & (PteFlags::all().bits() | Self::RSW_MASK);
-        self.0 = ((addr >> 12) << 10) | low;
+        self.0 = ((addr.as_raw() >> 12) << 10) | low;
         self
     }
 
@@ -116,8 +124,29 @@ impl PageTableEntry {
     }
 
     /// Decode page-aligned physical address
-    pub fn address(&self) -> usize {
-        ((self.0 & Self::PPN_MASK) >> 10) << 12
+    pub fn address(&self) -> Pa {
+        Pa::new(((self.0 & Self::PPN_MASK) >> 10) << 12)
+    }
+
+    pub fn page_table(&self) -> Option<&mut PageTable> {
+        if self.flags().contains(PteFlags::V) {
+            unsafe { Some(&mut *(self.address().to_va().as_mut_ptr())) }
+        } else {
+            None
+        }
+    }
+
+    pub fn or_insert_with(&mut self, default: impl FnOnce() -> *mut PageTable) -> &mut PageTable {
+        if self.flags().contains(PteFlags::V) {
+            return unsafe { &mut *(self.address().to_va().as_mut_ptr()) };
+        }
+
+        let page_table = unsafe { &mut *default() };
+        *page_table = PageTable::default();
+
+        self.mut_address(Va::from(&mut *page_table).to_pa())
+            .mut_flags(PteFlags::V);
+        page_table
     }
 
     /// Decode PTE flags
@@ -128,18 +157,18 @@ impl PageTableEntry {
 
 const MASK: usize = (1 << 9) - 1;
 
-pub fn ppn(pa: usize) -> usize {
-    pa >> 12
+pub fn ppn(pa: Pa) -> usize {
+    pa.as_raw() >> 12
 }
 
-pub fn vpn2(va: usize) -> usize {
-    (va >> 30) & MASK
+pub fn vpn2(va: Va) -> usize {
+    (va.as_raw() >> 30) & MASK
 }
 
-fn vpn1(va: usize) -> usize {
-    (va >> 21) & MASK
+pub fn vpn1(va: Va) -> usize {
+    (va.as_raw() >> 21) & MASK
 }
 
-fn vpn0(va: usize) -> usize {
-    (va >> 12) & MASK
+pub fn vpn0(va: Va) -> usize {
+    (va.as_raw() >> 12) & MASK
 }

@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(dirname "$script_dir")
+toolchain=$(sed -n '1p' "$repo_root/.rustfmt-toolchain")
+
+exec rustfmt +"$toolchain" "$@"
