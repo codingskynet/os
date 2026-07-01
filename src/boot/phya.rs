@@ -6,18 +6,8 @@ use core::slice::{self, Iter};
 
 use arrayvec::ArrayVec;
 
+use crate::arch::consts::*;
 use crate::mm::addr::{Pa, Va};
-
-unsafe extern "C" {
-    static _stext: u8;
-    static _etext: u8;
-    static _rodata_start: u8;
-    static _rodata_end: u8;
-    static _data_start: u8;
-    static _data_end: u8;
-    static _bss_start: u8;
-    static _bss_end: u8;
-}
 
 pub struct PhysicalAllocator {
     memory: ArrayVec<Memory, 2>,
@@ -58,21 +48,8 @@ impl PhysicalAllocator {
     }
 
     pub fn alloc<T>(&mut self, init: impl FnOnce() -> T) -> Result<&'static mut T, Error> {
-        let size = NonZeroUsize::try_from(mem::size_of::<T>()).map_err(|_| Error::Zeroed)?;
-        let pa = self.alloc_pa(
-            size,
-            // Safety: align_of guarantees nonzero.
-            mem::align_of::<T>().try_into().unwrap(),
-        )?;
-        let ptr: *mut T = pa.to_va().as_mut_ptr();
-
-        // Initialize before publishing the reference so callers never observe
-        // uninitialized memory.
-        unsafe {
-            ptr.write(init());
-        }
-
-        Ok(unsafe { &mut *ptr })
+        let ptr = self.alloc_uninit()?;
+        Ok(ptr.write(init()))
     }
 
     pub fn alloc_slice<T>(
@@ -172,7 +149,7 @@ impl Memory {
     pub fn alloc(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Result<Region, ()> {
         let mut allocation = None;
         for free in self.free_iter() {
-            let Some(region) = Region::from_size(free.start.align(align), size) else {
+            let Some(region) = Region::from_size(free.start.align_up(align), size) else {
                 return Err(());
             };
             if region.end > free.end {
@@ -342,14 +319,6 @@ impl<'a> Iterator for FreeRegionIterator<'a> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("No memory")]
-    NoMemory,
     #[error("Out of memory")]
     OutOfMemory,
-    #[error("Invalid layout")]
-    InvalidLayout,
-    #[error("Zeored")]
-    Zeroed,
-    #[error("Too many regions")]
-    TooManyRegions,
 }

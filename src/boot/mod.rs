@@ -82,16 +82,16 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) {
 }
 
 fn init_page_metadata(mut allocator: PhysicalAllocator, region: Region) -> PageMeta {
-    let offset = region.start.align(PAGE_SIZE).as_raw() / PAGE_SIZE;
-    let end = region.end.align(PAGE_SIZE).as_raw() / PAGE_SIZE;
+    let offset = region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE;
+    let end = region.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE;
     let len = end - offset;
     let pages = allocator
         .alloc_slice(len, |i| Page::free(Pa::new((offset + i) * PAGE_SIZE.get())))
         .expect("Failed to allocate page metadata");
 
     for reserved in allocator.reserved_iter() {
-        let start = reserved.start.align(PAGE_SIZE).as_raw() / PAGE_SIZE - offset;
-        let end = reserved.end.align(PAGE_SIZE).as_raw() / PAGE_SIZE - offset;
+        let start = reserved.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE - offset;
+        let end = reserved.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE - offset;
         for page in &mut pages[start..end] {
             page.reserve();
         }

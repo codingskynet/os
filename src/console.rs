@@ -4,6 +4,7 @@ use core::{ptr, str};
 
 use crate::dev::dt::{Fdt, RegIter};
 use crate::dev::uart::ns16550::NS16550;
+use crate::mm::addr::Pa;
 use crate::util::Global;
 
 /// Prints without a newline.
@@ -25,7 +26,9 @@ pub fn _print(args: fmt::Arguments) {
     CONSOLE.as_mut().write_fmt(args).unwrap();
 }
 
-pub static CONSOLE: Global<Console> = Global::new(Console::Ns16550(NS16550::new(0x10000000)));
+pub static CONSOLE: Global<Console> = Global::new(Console::Ns16550(NS16550::new(
+    Pa::new(0x1000_0000).as_raw(),
+)));
 
 pub enum Console {
     Ns16550(NS16550),
@@ -76,7 +79,7 @@ pub unsafe fn install_from_fdt(fdt: &Fdt) -> Result<(), Error> {
 
             ptr::write(
                 CONSOLE.0.get(),
-                Console::Ns16550(NS16550::new(base as usize)),
+                Console::Ns16550(NS16550::new(Pa::new(base as usize).to_va().as_raw())),
             );
 
             println!(

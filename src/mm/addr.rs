@@ -1,7 +1,24 @@
 use core::fmt;
 use core::num::NonZeroUsize;
 
-use crate::arch::consts::DIRECT_MAP_ADDR;
+use crate::arch::consts::*;
+
+macro_rules! impl_partial_eq_usize {
+    ($ty:ty) => {
+        impl PartialEq<usize> for $ty {
+            fn eq(&self, other: &usize) -> bool {
+                self.0 == *other
+            }
+        }
+        impl PartialEq<$ty> for usize {
+            fn eq(&self, other: &$ty) -> bool {
+                *self == other.0
+            }
+        }
+    };
+}
+impl_partial_eq_usize!(Pa);
+impl_partial_eq_usize!(Va);
 
 fn fmt_addr(f: &mut fmt::Formatter<'_>, addr: usize) -> fmt::Result {
     write!(
@@ -24,10 +41,16 @@ impl Pa {
         Self(addr)
     }
 
-    pub fn align(&self, align: NonZeroUsize) -> Self {
+    pub fn align_up(&self, align: NonZeroUsize) -> Self {
         let align = align.get();
         let mask = align - 1;
         Pa((self.0 + mask) & (!mask))
+    }
+
+    pub fn align_down(&self, align: NonZeroUsize) -> Self {
+        let align = align.get();
+        let mask = align - 1;
+        Pa(self.0 & (!mask))
     }
 
     pub fn checked_offset(&self, offset: usize) -> Option<Self> {
@@ -35,10 +58,10 @@ impl Pa {
     }
 
     pub const fn to_va(&self) -> Va {
-        Va(self.0.checked_add(DIRECT_MAP_ADDR).expect("Invalid Pa"))
+        Va(self.0.checked_add(DIRECT_VMA_BASE).expect("Invalid Pa"))
     }
 
-    pub fn as_raw(&self) -> usize {
+    pub const fn as_raw(&self) -> usize {
         self.0
     }
 }
@@ -76,7 +99,15 @@ impl Va {
     }
 
     pub fn to_pa(&self) -> Pa {
-        Pa(self.0.checked_sub(DIRECT_MAP_ADDR).expect("Invalid Va"))
+        let addr = match self.0 {
+            LOWER_CANONICAL_BASE..LOWER_CANONICAL_SIZE => todo!("user-space VA not defined"),
+            NON_CANONICAL_HOLE_BASE..NON_CANONICAL_HOLE_END => panic!("Invalid VA(non-canonical)"),
+            DIRECT_VMA_BASE..DIRECT_VMA_END => self.0.checked_sub(DIRECT_VMA_BASE),
+            KERNEL_VMA_BASE.. => self.0.checked_sub(KERNEL_VMA_OFFSET),
+            _ => panic!("Undefined VA"),
+        }
+        .expect("Invalid Va");
+        Pa(addr)
     }
 
     pub const fn as_raw(&self) -> usize {

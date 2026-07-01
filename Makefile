@@ -5,7 +5,13 @@ TARGET_DIR := target/$(ARCH)/release
 KERNEL_ELF := $(TARGET_DIR)/kernel
 KERNEL_IMG := kernel.img
 
-RUSTFLAGS := -C link-args=--script=$(LINKER_SCRIPT)
+MEMORY     := 64M
+
+RUSTFLAGS := \
+	-C code-model=medium \
+	-C relocation-model=static \
+	-C link-arg=--script=$(LINKER_SCRIPT) \
+	-C link-arg=--no-relax
 
 .PHONY: all setup build image run clean fmt clippy test check
 
@@ -26,6 +32,7 @@ image: build
 run: image
 	qemu-system-riscv64 \
 		-machine virt \
+		-m $(MEMORY) \
 		-nographic \
 		-bios none \
 		-kernel $(KERNEL_IMG)
