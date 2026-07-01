@@ -25,7 +25,7 @@ pub unsafe fn enable_mmu_and_jump(
 
     // Temporary Sv39 root page table using 1GiB leaf mapping for whole memory
     static mut TEMP_ROOT: PageTable = PageTable::new();
-    // Temporary Sv39 L1 page table usign 2MiB leaf mapping for kernel
+    // Temporary Sv39 L1 page table using 2MiB leaf mapping for kernel
     static mut TEMP_KERNEL_L1: PageTable = PageTable::new();
 
     unsafe {
@@ -38,12 +38,6 @@ pub unsafe fn enable_mmu_and_jump(
 
         let flag =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::A | PteFlags::D;
-
-        let early_mmio = Pa::new(0);
-        (*root)
-            .entry(vpn2(early_mmio.into_va()))
-            .mut_address(early_mmio)
-            .mut_flags(flag);
 
         // create direct map for physical RAM section(QEMU: 0x8000_0000 ~)
         {
@@ -70,8 +64,13 @@ pub unsafe fn enable_mmu_and_jump(
                 .mut_address(Pa::new(kernel_l1 as usize))
                 .mut_flags(PteFlags::V);
 
-            let mut va = Va::new(&raw const _kernel_start as usize + KERNEL_VMA_OFFSET);
-            let end = Va::new((&raw const _kernel_end) as usize + KERNEL_VMA_OFFSET);
+            let mut va = Va::new(&raw const _kernel_start as usize)
+                .checked_offset(KERNEL_VMA_OFFSET)
+                .unwrap();
+            assert!(va == KERNEL_VMA_BASE);
+            let end = Va::new((&raw const _kernel_end) as usize)
+                .checked_offset(KERNEL_VMA_OFFSET)
+                .unwrap();
             while va < end {
                 (*kernel_l1)
                     .entry(vpn1(va))
@@ -81,11 +80,19 @@ pub unsafe fn enable_mmu_and_jump(
             }
         }
 
-        // TODO: MMIO must be mapped to temp page table?
-        ptr::write(
-            CONSOLE.as_mut(),
-            Console::Ns16550(NS16550::new(Pa::new(0x1000_0000).into_va().as_raw())),
-        );
+        // create MMIO mapping, especially for console
+        {
+            let console = Pa::new(0x1000_0000);
+            let page = console.align_down(L2_PAGE_SIZE);
+            (*root)
+                .entry(vpn2(page.into_va()))
+                .mut_address(page)
+                .mut_flags(flag);
+            ptr::write(
+                CONSOLE.as_mut(),
+                Console::Ns16550(NS16550::new(console.into_va().as_raw())),
+            );
+        }
 
         let satp = SATP_MODE_SV39 | ppn(Pa::new(root as usize));
         asm!("sfence.vma zero, zero", options(nostack, preserves_flags));

@@ -1,6 +1,6 @@
 use core::num::NonZeroUsize;
 
-include!("../../../src/util/consts.rs");
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/util/consts.rs"));
 
 unsafe extern "C" {
     pub static _kernel_start: u8;

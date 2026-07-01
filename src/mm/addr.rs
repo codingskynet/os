@@ -100,7 +100,7 @@ impl Va {
 
     pub fn into_pa(self) -> Pa {
         let addr = match self.0 {
-            LOWER_CANONICAL_BASE..LOWER_CANONICAL_SIZE => todo!("user-space VA not defined"),
+            LOWER_CANONICAL_BASE..LOWER_CANONICAL_END => todo!("user-space VA not defined"),
             NON_CANONICAL_HOLE_BASE..NON_CANONICAL_HOLE_END => panic!("Invalid VA(non-canonical)"),
             DIRECT_VMA_BASE..DIRECT_VMA_END => self.0.checked_sub(DIRECT_VMA_BASE),
             KERNEL_VMA_BASE.. => self.0.checked_sub(KERNEL_VMA_OFFSET),

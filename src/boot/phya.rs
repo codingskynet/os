@@ -20,18 +20,9 @@ impl PhysicalAllocator {
 
             let mut reserved: ArrayVec<Region, 32> = ArrayVec::new();
             reserved.push(Region::from_linker_symbols(&_stext, &_etext));
-            reserved.push(Region::from_linker_symbols(
-                &raw const _rodata_start,
-                &raw const _rodata_end,
-            ));
-            reserved.push(Region::from_linker_symbols(
-                &raw const _data_start,
-                &raw const _data_end,
-            ));
-            reserved.push(Region::from_linker_symbols(
-                &raw const _bss_start,
-                &raw const _bss_end,
-            ));
+            reserved.push(Region::from_linker_symbols(&_rodata_start, &_rodata_end));
+            reserved.push(Region::from_linker_symbols(&_data_start, &_data_end));
+            reserved.push(Region::from_linker_symbols(&_bss_start, &_bss_end));
             // TODO: add reserve-memory from FDT
             reserved.sort_unstable();
 
@@ -149,9 +140,7 @@ impl Memory {
     pub fn alloc(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Result<Region, ()> {
         let mut allocation = None;
         for free in self.free_iter() {
-            let Some(region) = Region::from_size(free.start.align_up(align), size) else {
-                return Err(());
-            };
+            let region = Region::from_size(free.start.align_up(align), size).unwrap();
             if region.end > free.end {
                 continue;
             }

@@ -21,7 +21,14 @@ pub fn dump_page_list(page_meta: &PageMeta) {
             status = page.status;
         }
     }
-    dump_page_range(start, pages[pages.len() - 1].addr, status);
+    dump_page_range(
+        start,
+        pages[pages.len() - 1]
+            .addr
+            .checked_offset(PAGE_SIZE.get())
+            .unwrap(),
+        status,
+    );
 }
 
 fn dump_page_range(start: Pa, end: Pa, status: Status) {

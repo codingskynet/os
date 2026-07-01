@@ -42,12 +42,6 @@ OUTPUT_ARCH( "riscv" )
 ENTRY( _start )
 
 /* ---------------------------------------------------------------------------
- *  MEMORY
- *  RISCV: QEMU virt machine's main RAM starts at 0x80000000.
- *  128 MiB is more than enough for a toy kernel; the virt machine typically
- *  has 128-1024 MiB depending on configuration.
- * ------------------------------------------------------------------------- */
-/* ---------------------------------------------------------------------------
  *  PHDRS (Program Headers)
  *  Defines ELF program headers (= segments, the parts the loader maps).
  *  Each output section below maps to one of these via ":text" / ":data" etc.
