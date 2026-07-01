@@ -24,7 +24,7 @@ jobs:
         run: rustup toolchain install "$(cat .rustfmt-toolchain)" --component rustfmt
 
       - name: Spell check (typos)
-        uses: crate-ci/typos@v1.37.4
+        uses: crate-ci/typos@v1.48.0
 
       - name: Format (rustfmt)
         run: ./fmt --check
