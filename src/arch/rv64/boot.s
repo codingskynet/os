@@ -72,6 +72,7 @@
  * ============================================================================ */
 
 .equ STACK_SIZE,     8192
+.section .text.init, "ax"
 
 /* ---------------------------------------------------------------------------
  *  BOOT ENTRY — the Rust entry-point symbol.
@@ -115,7 +116,47 @@ _start:
     j    1b                         # loop
 2:
 
-    j    BOOT_ENTRY                 # hart 0 jump to rust
+    j    enter_supervisor_mode      # hart 0 enters S-mode before Rust
+
+/* ---------------------------------------------------------------------------
+ *  Temporary M-mode -> S-mode transition
+ *
+ *  QEMU's -bios none -kernel path starts the kernel in machine mode.  Sv39
+ *  paging is controlled by satp in supervisor mode, so drop to S-mode before
+ *  entering Rust.
+ *
+ *  TODO: When booting through firmware such as OpenSBI, the kernel may already
+ *  enter here in S-mode.  Split this into a firmware/SBI entry path before
+ *  supporting that boot mode; executing M-mode CSR instructions from S-mode
+ *  would trap.
+ * ------------------------------------------------------------------------- */
+enter_supervisor_mode:
+    # Give S-mode access to all physical memory for this early bootstrap path.
+    # pmpaddr0 = all ones, pmpcfg0 = TOR | R | W | X.
+    li   t0, -1
+    csrw pmpaddr0, t0
+    li   t0, 0x0f
+    csrw pmpcfg0, t0
+
+    # Delegate traps and interrupts that S-mode can handle.  These CSRs are
+    # WARL, so unsupported delegation bits are ignored by the implementation.
+    li   t0, -1
+    csrw medeleg, t0
+    csrw mideleg, t0
+
+    # mret returns to the privilege encoded in mstatus.MPP.  Clear MPP, then
+    # set it to 01 (supervisor mode).
+    li   t0, (3 << 11)
+    csrc mstatus, t0
+    li   t0, (1 << 11)
+    csrs mstatus, t0
+
+    la   t0, supervisor_entry
+    csrw mepc, t0
+    mret
+
+supervisor_entry:
+    j    BOOT_ENTRY                 # jump to Rust in S-mode
 
 /* ---------------------------------------------------------------------------
  *  Secondary hart parking

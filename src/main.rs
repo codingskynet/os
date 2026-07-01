@@ -1,7 +1,14 @@
+#![allow(clippy::identity_op)]
+#![allow(unused)]
 #![no_main]
 #![no_std]
 
-pub mod arch;
-pub mod console;
-pub mod dev;
-pub mod kernel;
+mod arch;
+mod boot;
+mod console;
+mod dev;
+mod init;
+mod kernel;
+mod mm;
+mod panic;
+mod util;

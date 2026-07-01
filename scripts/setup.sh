@@ -18,4 +18,13 @@ echo "==> Installing Rust toolchain components..."
 rustup component add llvm-tools-preview
 cargo install cargo-binutils
 
+echo "==> Installing typos (spell checker)..."
+if command -v typos &>/dev/null; then
+    echo "  typos already installed ($(typos --version))"
+elif command -v cargo &>/dev/null; then
+    cargo install typos-cli
+else
+    echo "WARN: Cargo not found, skipping typos installation."
+fi
+
 echo "==> Done! Run 'make run' to build and boot the kernel."

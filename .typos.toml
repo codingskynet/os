@@ -1,0 +1,15 @@
+[default.extend-words]
+
+# UART register names
+"THR" = "THR"
+"THRE" = "THRE"
+"LSR" = "LSR"
+"REG_THR" = "REG_THR"
+"LSR_THRE" = "LSR_THRE"
+
+[files]
+extend-exclude = [
+  "Cargo.lock",
+  "kernel.img",
+  "*.dtb",
+]

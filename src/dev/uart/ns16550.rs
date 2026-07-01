@@ -6,7 +6,7 @@ const REG_LSR: usize = 0x05; // Line Status Register (read)
 const LSR_THRE: u8 = 0x40; // Transmitter Holding Register Empty
 
 pub struct NS16550 {
-    base_addr: usize,
+    addr: usize,
 }
 
 impl NS16550 {
@@ -22,8 +22,8 @@ impl NS16550 {
     ///   that reacts to loads/stores with side-effects).
     /// * No aliasing mutable references to the same registers exist at the same
     ///   time.
-    pub const fn new(base_addr: usize) -> Self {
-        Self { base_addr }
+    pub const fn new(addr: usize) -> Self {
+        Self { addr }
     }
 }
 
@@ -50,6 +50,6 @@ impl fmt::Write for NS16550 {
 
 impl NS16550 {
     fn reg(&self, offset: usize) -> *mut u8 {
-        (self.base_addr + offset) as *mut _
+        (self.addr + offset) as *mut _
     }
 }

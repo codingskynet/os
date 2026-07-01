@@ -7,14 +7,30 @@
  *
  *  RISC-V BACKGROUND
  *  On the QEMU virt machine with -bios none -kernel:
- *    • All harts (CPU cores) start in MACHINE mode at address 0x80000000
- *    • The first instruction at 0x80000000 MUST be the entry point (_start)
- *    • hart 0 runs; other harts are parked in boot.s
- *    • No bootloader — the kernel IS the bootloader
+ *    - All harts (CPU cores) start in MACHINE mode at address 0x80000000
+ *    - The first instruction at 0x80000000 MUST be the entry point (_start)
+ *    - hart 0 runs; other harts are parked in boot.s
+ *    - No bootloader — the kernel IS the bootloader
  *  ============================================================================
  */
 
 OUTPUT_ARCH( "riscv" )
+
+/*
+ * This kernel is linked at a high virtual address but starts executing from
+ * its physical load address before paging is enabled. Like Linux/RISC-V, the
+ * early image therefore relies on medany-style PC-relative code generation:
+ *
+ *   Rust/LLVM: -C code-model=medium -C relocation-model=static
+ *   Linker:    --no-relax
+ *
+ * Do not use absolute addresses or GP-relative relaxation in early boot code
+ * unless gp and the matching virtual mapping are already established.
+ *
+ * KERNEL_LMA_BASE, KERNEL_VMA_BASE, and KERNEL_VMA_OFFSET are injected by
+ * build.rs from src/arch/rv64/consts.rs. Keep Rust as the single source for
+ * these addresses.
+ */
 
 /* ---------------------------------------------------------------------------
  *  ENTRY
@@ -26,17 +42,6 @@ OUTPUT_ARCH( "riscv" )
 ENTRY( _start )
 
 /* ---------------------------------------------------------------------------
- *  MEMORY
- *  RISCV: QEMU virt machine's main RAM starts at 0x80000000.
- *  128 MiB is more than enough for a toy kernel; the virt machine typically
- *  has 128-1024 MiB depending on configuration.
- * ------------------------------------------------------------------------- */
-MEMORY
-{
-  ram   (wxa) : ORIGIN = 0x80000000, LENGTH = 128M
-}
-
-/* ---------------------------------------------------------------------------
  *  PHDRS (Program Headers)
  *  Defines ELF program headers (= segments, the parts the loader maps).
  *  Each output section below maps to one of these via ":text" / ":data" etc.
@@ -44,9 +49,9 @@ MEMORY
  *  PT_LOAD = a segment that gets loaded into memory.
  *  On bare metal these are mostly informational; QEMU's -kernel loads the
  *  entire flat binary anyway. But they matter for:
- *    • Debuggers (GDB)
- *    • objcopy --strip-all (creates the .img from the ELF)
- *    • Linker relaxation / GP-relative addressing
+ *    - Debuggers (GDB)
+ *    - objcopy --strip-all (creates the .img from the ELF)
+ *    - Linker relaxation / GP-relative addressing
  * ------------------------------------------------------------------------- */
 PHDRS
 {
@@ -57,6 +62,23 @@ PHDRS
 
 SECTIONS
 {
+  ASSERT(DEFINED(KERNEL_LMA_BASE),
+         "KERNEL_LMA_BASE must be provided by build.rs")
+  ASSERT(DEFINED(KERNEL_VMA_BASE),
+         "KERNEL_VMA_BASE must be provided by build.rs")
+  ASSERT(DEFINED(KERNEL_VMA_OFFSET),
+         "KERNEL_VMA_OFFSET must be provided by build.rs")
+
+  . = KERNEL_VMA_BASE;
+  _kernel_start = .;
+
+  ASSERT((KERNEL_LMA_BASE % 0x200000) == 0,
+         "KERNEL_LMA_BASE must be 2MiB-aligned for early Sv39 superpage mapping")
+  ASSERT((KERNEL_VMA_BASE % 0x200000) == 0,
+         "KERNEL_VMA_BASE must be 2MiB-aligned for early Sv39 superpage mapping")
+  ASSERT((KERNEL_VMA_OFFSET % 0x200000) == 0,
+         "KERNEL_VMA_OFFSET must preserve 2MiB alignment")
+
   /* ========================================================================
    *  .text.init — Entry point section
    *
@@ -78,15 +100,18 @@ SECTIONS
    *  to that exact address. If the very first 4 bytes are NOT _start,
    *  execution begins in the middle of Rust code or garbage — instant fault.
    * ======================================================================== */
-  .text.init : ALIGN(4)
+  . = ALIGN(4);
+  .text.init KERNEL_VMA_BASE : AT(KERNEL_LMA_BASE)
   {
     _stext = .;                    /* "." = current location counter */
     KEEP(*(.text.init))            /* Collect ALL .text.init input sections */
     . = ALIGN(4);
-  } >ram AT>ram :text              /* Place in "ram" memory; "text" segment */
-  /*    ↑     ↑↑                       │          │
-   *    │     VMA = LMA (no relocation) │          └── ELF program header
-   *    └── output section name         └── ":text" PHDR */
+  } :text
+
+  ASSERT(_stext == KERNEL_VMA_BASE,
+         "_start must be the first byte in the linked kernel image")
+  ASSERT(LOADADDR(.text.init) == KERNEL_LMA_BASE,
+         ".text.init must load at the QEMU virt reset address")
 
   /* ========================================================================
    *  .text — Main kernel code
@@ -104,12 +129,13 @@ SECTIONS
    *    - Setting up MMU permissions (RX vs RW)
    *    - Self-checks / integrity hashing
    * ======================================================================== */
-  .text : ALIGN(4)
+  . = ALIGN(4);
+  .text : AT(ADDR(.text) - KERNEL_VMA_OFFSET)
   {
     *(.text .text.*)
     . = ALIGN(4);
     _etext = .;
-  } >ram AT>ram :text
+  } :text
 
   /* ========================================================================
    *  .rodata — Read-only data
@@ -120,13 +146,14 @@ SECTIONS
    *
    *  _rodata_start / _rodata_end: boundaries for permission setting.
    * ======================================================================== */
-  .rodata : ALIGN(4)
+  . = ALIGN(4);
+  .rodata : AT(ADDR(.rodata) - KERNEL_VMA_OFFSET)
   {
     _rodata_start = .;
     *(.rodata .rodata.*)
     . = ALIGN(4);
     _rodata_end = .;
-  } >ram AT>ram :text
+  } :text
 
   /* ========================================================================
    *  .data — Writable data (initialized globals / statics)
@@ -143,14 +170,15 @@ SECTIONS
    *
    *  _data_start / _data_end: boundaries for cache maintenance, hashing.
    * ======================================================================== */
-  .data : ALIGN(4096)
+  . = ALIGN(4096);
+  .data : AT(ADDR(.data) - KERNEL_VMA_OFFSET)
   {
     _data_start = .;
     *(.sdata .sdata.*)
     *(.data .data.*)
     . = ALIGN(4);
     _data_end = .;
-  } >ram AT>ram :data
+  } :data
 
   /* ========================================================================
    *  .bss — Zero-initialized data
@@ -165,21 +193,15 @@ SECTIONS
    *  *(.sbss .sbss.*) collects small-BSS for GP-relative access, same
    *  concept as .sdata for small globals.
    * ======================================================================== */
-  .bss : ALIGN(4)
+  . = ALIGN(4);
+  .bss : AT(ADDR(.bss) - KERNEL_VMA_OFFSET)
   {
     _bss_start = .;
     *(.sbss .sbss.*)
     *(.bss .bss.*)
     . = ALIGN(4);
     _bss_end = .;
-  } >ram AT>ram :bss
+  } :bss
 
-  /* ---------------------------------------------------------------------------
-   *  PROVIDE
-   *  Creates a symbol ONLY if nothing else defines it.
-   *  These are convenience symbols for the full RAM range, usable from Rust
-   *  code (extern "C" { … }) for e.g. heap allocators.
-   * ------------------------------------------------------------------------- */
-  PROVIDE(_memory_start = ORIGIN(ram));
-  PROVIDE(_memory_end = ORIGIN(ram) + LENGTH(ram));
+  _kernel_end = .;
 }

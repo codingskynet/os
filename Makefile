@@ -5,9 +5,15 @@ TARGET_DIR := target/$(ARCH)/release
 KERNEL_ELF := $(TARGET_DIR)/kernel
 KERNEL_IMG := kernel.img
 
-RUSTFLAGS := -C link-args=--script=$(LINKER_SCRIPT)
+MEMORY     := 64M
 
-.PHONY: all setup build image run clean fmt clippy test check
+RUSTFLAGS := \
+	-C code-model=medium \
+	-C relocation-model=static \
+	-C link-arg=--script=$(LINKER_SCRIPT) \
+	-C link-arg=--no-relax
+
+.PHONY: all setup build image run clean fmt clippy typos test check
 
 all: build image
 
@@ -26,6 +32,7 @@ image: build
 run: image
 	qemu-system-riscv64 \
 		-machine virt \
+		-m $(MEMORY) \
 		-nographic \
 		-bios none \
 		-kernel $(KERNEL_IMG)
@@ -35,13 +42,15 @@ clean:
 	cargo clean
 
 fmt:
-	cargo fmt
+	./fmt
 
 clippy:
-	cargo clippy --target=$(ARCH) --release -- -D warnings
+	cargo clippy --target=$(ARCH)
+
+typos:
+	typos
 
 test:
 	cargo test --lib
 
-check: fmt clippy test
-	cargo check --target=$(ARCH) --release
+check: fmt clippy typos test

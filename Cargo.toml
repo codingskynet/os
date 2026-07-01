@@ -25,7 +25,11 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+debug = "line-tables-only"
 
 [dependencies]
+arrayvec = { version = "0.7.7", default-features = false }
+derive_more = { version = "2", default-features = false, features = ["full"] }
+bitflags = { version = "2.13.0", default-features = false }
 thiserror = { version = "2", default-features = false }
 winnow = { version = "1.0.3", default-features = false, features = ["binary"] }
