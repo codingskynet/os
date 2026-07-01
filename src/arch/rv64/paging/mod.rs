@@ -33,15 +33,15 @@ pub unsafe fn enable_mmu_and_jump(
         // - identity RAM map for the instructions immediately after satp
         // - linear direct map for early physical access after the jump
         // - kernel image map at its linked high virtual address
-        let root = (&raw mut TEMP_ROOT) as *mut PageTable;
-        let kernel_l1 = (&raw mut TEMP_KERNEL_L1) as *mut PageTable;
+        let root = &raw mut TEMP_ROOT;
+        let kernel_l1 = &raw mut TEMP_KERNEL_L1;
 
         let flag =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::A | PteFlags::D;
 
         let early_mmio = Pa::new(0);
         (*root)
-            .entry(vpn2(early_mmio.to_va()))
+            .entry(vpn2(early_mmio.into_va()))
             .mut_address(early_mmio)
             .mut_flags(flag);
 
@@ -56,7 +56,7 @@ pub unsafe fn enable_mmu_and_jump(
                     .mut_flags(flag);
                 // direct mapping
                 (*root)
-                    .entry(vpn2(pa.to_va()))
+                    .entry(vpn2(pa.into_va()))
                     .mut_address(pa)
                     .mut_flags(flag);
                 pa = pa.checked_offset(L2_PAGE_SIZE.get()).unwrap();
@@ -75,7 +75,7 @@ pub unsafe fn enable_mmu_and_jump(
             while va < end {
                 (*kernel_l1)
                     .entry(vpn1(va))
-                    .mut_address(va.to_pa())
+                    .mut_address(va.into_pa())
                     .mut_flags(flag);
                 va = va.checked_offset(L1_PAGE_SIZE.get()).unwrap();
             }
@@ -84,7 +84,7 @@ pub unsafe fn enable_mmu_and_jump(
         // TODO: MMIO must be mapped to temp page table?
         ptr::write(
             CONSOLE.as_mut(),
-            Console::Ns16550(NS16550::new(Pa::new(0x1000_0000).to_va().as_raw())),
+            Console::Ns16550(NS16550::new(Pa::new(0x1000_0000).into_va().as_raw())),
         );
 
         let satp = SATP_MODE_SV39 | ppn(Pa::new(root as usize));
@@ -123,7 +123,9 @@ pub unsafe fn init_page_table(
     ) {
         let l1 = l2.entry(vpn2(va)).or_insert_with(|| alloc().as_mut_ptr());
         let l0 = l1.entry(vpn1(va)).or_insert_with(|| alloc().as_mut_ptr());
-        l0.entry(vpn0(va)).mut_address(va.to_pa()).mut_flags(flags);
+        l0.entry(vpn0(va))
+            .mut_address(va.into_pa())
+            .mut_flags(flags);
     }
 
     let root = alloc().write(PageTable::default());
@@ -132,7 +134,7 @@ pub unsafe fn init_page_table(
     // create direct map for physical RAM section(QEMU: 0x8000_0000 ~)
     let mut pa = start;
     while pa < end {
-        map(root, pa.to_va(), &mut alloc, flags);
+        map(root, pa.into_va(), &mut alloc, flags);
         pa = pa.checked_offset(PAGE_SIZE.get()).unwrap();
     }
 
@@ -149,7 +151,7 @@ pub unsafe fn init_page_table(
     }
 
     // TODO: generalize from reading FDT with MMIO_MAP_ADDR
-    let uart = Pa::new(0x1000_0000).to_va();
+    let uart = Pa::new(0x1000_0000).into_va();
     map(root, uart, &mut alloc, flags);
     unsafe {
         ptr::write(
@@ -159,7 +161,7 @@ pub unsafe fn init_page_table(
     }
 
     unsafe {
-        let satp = SATP_MODE_SV39 | ppn(Va::from(root).to_pa());
+        let satp = SATP_MODE_SV39 | ppn(Va::from(root).into_pa());
         asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
         asm!("csrw satp, {}", in(reg) satp, options(nostack, preserves_flags));
         asm!("sfence.vma zero, zero", options(nostack, preserves_flags));

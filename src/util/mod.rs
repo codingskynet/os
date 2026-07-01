@@ -11,6 +11,7 @@ impl<T> Global<T> {
         Self(UnsafeCell::new(value))
     }
 
+    #[allow(clippy::mut_from_ref)]
     pub fn as_mut(&self) -> &mut T {
         unsafe { self.0.get().as_mut_unchecked() }
     }

@@ -57,7 +57,7 @@ impl Pa {
         Some(Self(self.0.checked_add(offset)?))
     }
 
-    pub const fn to_va(&self) -> Va {
+    pub const fn into_va(self) -> Va {
         Va(self.0.checked_add(DIRECT_VMA_BASE).expect("Invalid Pa"))
     }
 
@@ -98,7 +98,7 @@ impl Va {
         Some(Self(self.0.checked_add(offset)?))
     }
 
-    pub fn to_pa(&self) -> Pa {
+    pub fn into_pa(self) -> Pa {
         let addr = match self.0 {
             LOWER_CANONICAL_BASE..LOWER_CANONICAL_SIZE => todo!("user-space VA not defined"),
             NON_CANONICAL_HOLE_BASE..NON_CANONICAL_HOLE_END => panic!("Invalid VA(non-canonical)"),

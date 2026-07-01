@@ -79,7 +79,7 @@ pub unsafe fn install_from_fdt(fdt: &Fdt) -> Result<(), Error> {
 
             ptr::write(
                 CONSOLE.0.get(),
-                Console::Ns16550(NS16550::new(Pa::new(base as usize).to_va().as_raw())),
+                Console::Ns16550(NS16550::new(Pa::new(base as usize).into_va().as_raw())),
             );
 
             println!(

@@ -25,11 +25,9 @@ pub unsafe fn find_memory_reg(fdt: &Fdt) -> Option<(&[u8], u32, u32)> {
                     _ => {}
                 },
                 FdtToken::NodeEnd if node_name.is_some() => {
-                    if is_memory {
-                        if let Some(reg) = reg {
-                            let (ac, sc) = fdt.reg_cells("/");
-                            return Some((reg, ac, sc));
-                        }
+                    if is_memory && let Some(reg) = reg {
+                        let (ac, sc) = fdt.reg_cells("/");
+                        return Some((reg, ac, sc));
                     }
                     node_name = None;
                     is_memory = false;

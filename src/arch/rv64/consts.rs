@@ -28,7 +28,6 @@ unsafe extern "C" {
 /// 0xffff_ffff_f000_0000 .. 0x0000_0000_0000_0000  kernel image, 256 MiB
 /// ```
 ///
-
 pub const LOWER_CANONICAL_BASE: usize = 0x0000_0000_0000_0000;
 pub const LOWER_CANONICAL_SIZE: usize = 256 * G;
 pub const LOWER_CANONICAL_END: usize = LOWER_CANONICAL_BASE + LOWER_CANONICAL_SIZE;

@@ -63,7 +63,7 @@ impl PhysicalAllocator {
             elem.write(init(i));
         }
 
-        Ok(unsafe { mem::transmute(data) })
+        Ok(unsafe { mem::transmute::<&mut [core::mem::MaybeUninit<T>], &mut [T]>(data) })
     }
 
     pub fn alloc_uninit<T>(&mut self) -> Result<&'static mut MaybeUninit<T>, Error> {
@@ -76,7 +76,7 @@ impl PhysicalAllocator {
             // Safety: align_of guarantees nonzero.
             mem::align_of::<T>().try_into().unwrap(),
         )?;
-        let ptr: *mut MaybeUninit<T> = pa.to_va().as_mut_ptr();
+        let ptr: *mut MaybeUninit<T> = pa.into_va().as_mut_ptr();
 
         Ok(unsafe { &mut *ptr })
     }
@@ -94,7 +94,7 @@ impl PhysicalAllocator {
             // Safety: align_of guarantees nonzero.
             mem::align_of::<T>().try_into().unwrap(),
         )?;
-        let ptr: *mut MaybeUninit<T> = pa.to_va().as_mut_ptr();
+        let ptr: *mut MaybeUninit<T> = pa.into_va().as_mut_ptr();
 
         Ok(unsafe { slice::from_raw_parts_mut(ptr, len) })
     }
@@ -163,7 +163,7 @@ impl Memory {
         if let Some(allocation) = allocation
             && self.reserve(allocation).is_ok()
         {
-            return Ok(allocation);
+            Ok(allocation)
         } else {
             Err(())
         }
@@ -192,8 +192,8 @@ impl Region {
 
     fn from_linker_symbols(start: *const u8, end: *const u8) -> Self {
         Self {
-            start: Va::new(start.addr()).to_pa(),
-            end: Va::new(end.addr()).to_pa(),
+            start: Va::new(start.addr()).into_pa(),
+            end: Va::new(end.addr()).into_pa(),
         }
     }
 

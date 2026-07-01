@@ -68,7 +68,7 @@ pub unsafe extern "C" fn _start_rust(hart_id: usize, dtb_ptr: Pa) -> ! {
 unsafe extern "C" fn after_mmu(hart_id: usize, dtb_pa: usize) -> ! {
     let boot_info = BootInfo {
         boot_cpu_id: hart_id,
-        boot_data: BootData::DeviceTree(Fdt::new(Pa::new(dtb_pa).to_va().as_ptr())),
+        boot_data: BootData::DeviceTree(Fdt::new(Pa::new(dtb_pa).into_va().as_ptr())),
     };
 
     unsafe {

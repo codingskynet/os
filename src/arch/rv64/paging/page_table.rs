@@ -128,23 +128,23 @@ impl PageTableEntry {
         Pa::new(((self.0 & Self::PPN_MASK) >> 10) << 12)
     }
 
-    pub fn page_table(&self) -> Option<&mut PageTable> {
-        if self.flags().contains(PteFlags::V) {
-            unsafe { Some(&mut *(self.address().to_va().as_mut_ptr())) }
-        } else {
-            None
-        }
-    }
+    // pub fn page_table(&self) -> Option<&mut PageTable> {
+    //     if self.flags().contains(PteFlags::V) {
+    //         unsafe { Some(&mut *(self.address().to_va().as_mut_ptr())) }
+    //     } else {
+    //         None
+    //     }
+    // }
 
     pub fn or_insert_with(&mut self, default: impl FnOnce() -> *mut PageTable) -> &mut PageTable {
         if self.flags().contains(PteFlags::V) {
-            return unsafe { &mut *(self.address().to_va().as_mut_ptr()) };
+            return unsafe { &mut *(self.address().into_va().as_mut_ptr()) };
         }
 
         let page_table = unsafe { &mut *default() };
         *page_table = PageTable::default();
 
-        self.mut_address(Va::from(&mut *page_table).to_pa())
+        self.mut_address(Va::from(&mut *page_table).into_pa())
             .mut_flags(PteFlags::V);
         page_table
     }
