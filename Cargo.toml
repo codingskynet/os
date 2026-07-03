@@ -6,9 +6,9 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = ["rv64", "virt"]
+default = ["rv64"]
+fuzz-allocator = []
 rv64 = []
-virt = []
 
 [[bin]]
 name = "kernel"
@@ -32,6 +32,7 @@ arrayvec = { version = "0.7.7", default-features = false }
 bitflags = { version = "2.13.0", default-features = false }
 crossbeam-utils = { version = "0.8", default-features = false }
 derive_more = { version = "2", default-features = false, features = ["full"] }
+either = { version = "1.16.0", default-features = false }
 extend = { version = "1.2", default-features = false }
 thiserror = { version = "2", default-features = false }
 winnow = { version = "1.0.3", default-features = false, features = ["binary"] }

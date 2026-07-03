@@ -1,12 +1,17 @@
+use core::fmt;
+
 use crate::arch::consts::PAGE_SIZE;
 use crate::mm::PAGE_META_MAP;
 use crate::mm::addr::Pa;
-use crate::mm::page::{PageMetaSection, Status};
+use crate::mm::buddy::BuddyAllocator;
+use crate::mm::page_meta::{Buddy, OwnedPageMeta, PageMeta, PageMetaSection, PageMetaState};
 use crate::println;
 
+#[cfg(feature = "fuzz-allocator")]
+pub mod fuzz;
+
 pub fn dump_page_list() {
-    let page_meta_map = PAGE_META_MAP.lock();
-    let sections = page_meta_map.sections();
+    let sections = PAGE_META_MAP.sections();
 
     if sections.is_empty() {
         println!("page metadata: empty");
@@ -15,7 +20,7 @@ pub fn dump_page_list() {
 
     let pages = sections
         .iter()
-        .fold(0, |pages, section| pages + section.page_metas().len());
+        .fold(0, |pages, section| pages + section.page_meta_items().len());
     println!(
         "page metadata: {} sections, {} pages",
         sections.len(),
@@ -28,7 +33,7 @@ pub fn dump_page_list() {
 }
 
 fn dump_page_section(index: usize, page_meta: &PageMetaSection) {
-    let pages = page_meta.page_metas();
+    let pages = page_meta.page_meta_items();
     if pages.is_empty() {
         println!(
             "  section {}: region {}..{} (offset {}): empty",
@@ -50,12 +55,13 @@ fn dump_page_section(index: usize, page_meta: &PageMetaSection) {
     );
 
     let mut start = pages[0].addr();
-    let mut status = pages[0].status;
-    for (_, page) in pages.iter().enumerate().skip(1) {
-        if page.status != status {
+    let mut status = page_status(&pages[0]);
+    for page in pages.iter().skip(1) {
+        let next_status = page_status(page);
+        if next_status != status {
             dump_page_range(start, page.addr(), status);
             start = page.addr();
-            status = page.status;
+            status = next_status;
         }
     }
     dump_page_range(
@@ -68,7 +74,7 @@ fn dump_page_section(index: usize, page_meta: &PageMetaSection) {
     );
 }
 
-fn dump_page_range(start: Pa, end: Pa, status: Status) {
+fn dump_page_range(start: Pa, end: Pa, status: PageMetaStatus) {
     println!(
         "  addr {}..{}: {} ({} pages)",
         start,
@@ -76,4 +82,87 @@ fn dump_page_range(start: Pa, end: Pa, status: Status) {
         status,
         (end.as_raw() - start.as_raw()) / PAGE_SIZE.get()
     );
+}
+
+fn page_status(page: &PageMeta) -> PageMetaStatus {
+    match &**page {
+        PageMetaState::Uninit => PageMetaStatus::Uninit,
+        PageMetaState::Reserved => PageMetaStatus::Reserved,
+        PageMetaState::Buddy(buddy) => PageMetaStatus::Buddy {
+            order: (buddy.reserved.len() + 1).trailing_zeros() as usize,
+        },
+        PageMetaState::BuddyReserved => PageMetaStatus::BuddyReserved,
+        PageMetaState::Slab(_) => PageMetaStatus::Slab,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PageMetaStatus {
+    Uninit,
+    Reserved,
+    Buddy { order: usize },
+    BuddyReserved,
+    Slab,
+}
+
+impl fmt::Display for PageMetaStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Uninit => f.write_str("Uninit"),
+            Self::Reserved => f.write_str("Reserved"),
+            Self::Buddy { order } => write!(f, "Buddy(order={order})"),
+            Self::BuddyReserved => f.write_str("BuddyReserved"),
+            Self::Slab => f.write_str("Slab"),
+        }
+    }
+}
+
+impl fmt::Debug for BuddyAllocator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuddyAllocator")
+            .field("heads", &BuddyHeads(self))
+            .finish()
+    }
+}
+
+struct BuddyHeads<'a>(&'a BuddyAllocator);
+
+impl fmt::Debug for BuddyHeads<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut list = f.debug_list();
+        for (order, head) in self.0.free_lists() {
+            list.entry(&BuddyHead { order, head });
+        }
+        list.finish()
+    }
+}
+
+struct BuddyHead<'a> {
+    order: usize,
+    head: Option<&'a OwnedPageMeta<Buddy>>,
+}
+
+impl fmt::Debug for BuddyHead<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.head {
+            Some(page) => write!(
+                f,
+                "order {}: {}, len={}",
+                self.order,
+                page.addr(),
+                buddy_list_len(page)
+            ),
+            None => write!(f, "order {}: None", self.order),
+        }
+    }
+}
+
+fn buddy_list_len(head: &OwnedPageMeta<Buddy>) -> usize {
+    let mut count = 1;
+    let mut current = head.next();
+    while let Some(page) = current {
+        count += 1;
+        current = page.next();
+    }
+    count
 }

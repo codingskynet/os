@@ -1,38 +1,31 @@
-use core::fmt::Debug;
+use core::cmp::min;
 use core::num::NonZeroUsize;
-use core::ptr::NonNull;
 
 use crate::arch::consts::PAGE_SIZE;
-use crate::mm::PAGE_META_MAP;
-use crate::mm::page::{PageMeta, Status};
+use crate::mm::page_meta::{Buddy, OwnedPageMeta, PageMeta, RefMutSliceOfPageMetaExt};
 
 pub struct BuddyAllocator {
     // nodes for 4KiB, 8KiB, 16KiB, ..., 2MiB
-    heads: [Option<NonNull<PageMeta>>; 10],
+    heads: [Option<OwnedPageMeta<Buddy>>; 10],
 }
-
-// TODO
-unsafe impl Send for BuddyAllocator {}
 
 impl BuddyAllocator {
     pub const fn empty() -> Self {
-        Self { heads: [None; 10] }
+        Self {
+            heads: [const { None }; 10],
+        }
     }
 
-    pub fn initialize(&mut self) {
-        fn max_order(pages: &[PageMeta], node: usize, max_order: usize) -> usize {
-            let page_frame = pages[node].addr().as_raw() / PAGE_SIZE.get();
-            let align_order = page_frame.trailing_zeros() as usize;
-            let max_order = max_order.min(align_order);
-
+    pub fn initialize_section(&mut self, page_meta_items: &mut [PageMeta]) {
+        fn max_order(page_meta_items: &[PageMeta], max_order: usize) -> usize {
             let mut index = 0;
             let mut best = 0;
             for order in 1..=max_order {
                 while index < (1 << order) {
-                    let Some(page) = pages.get(node + index) else {
+                    let Some(page) = page_meta_items.get(index) else {
                         return best;
                     };
-                    if page.status != Status::Free {
+                    if !page.is_uninit() {
                         return best;
                     }
                     index += 1;
@@ -43,25 +36,29 @@ impl BuddyAllocator {
             max_order
         }
 
-        for section in PAGE_META_MAP.lock().sections_mut() {
-            let pages = section.page_metas_mut();
-            let mut i = 0;
-            while i < pages.len() {
-                if pages[i].status != Status::Free {
-                    i += 1;
-                    continue;
-                }
-
-                let order = max_order(pages, i, self.heads.len() - 1);
-                let page = NonNull::new(&mut pages[i] as *mut _).unwrap();
-                self.push(order, page);
-
-                i += 1 << order;
+        let mut i = 0;
+        while i < page_meta_items.len() {
+            let page_meta = &page_meta_items[i];
+            if !page_meta.is_uninit() {
+                i += 1;
+                continue;
             }
+
+            let order = max_order(
+                &page_meta_items[i..],
+                min(
+                    page_meta.addr().aligned_order(PAGE_SIZE),
+                    self.heads.len() - 1,
+                ),
+            );
+            let owned = (&mut page_meta_items[i..(i + (1 << order))]).owned_buddy(order);
+            self.push(owned);
+
+            i += 1 << order;
         }
     }
 
-    pub fn alloc(&mut self, size: NonZeroUsize) -> Option<NonNull<PageMeta>> {
+    pub fn alloc(&mut self, size: NonZeroUsize) -> Option<OwnedPageMeta<Buddy>> {
         let pages = size.get().div_ceil(PAGE_SIZE.get());
         let order = pages.checked_next_power_of_two()?.trailing_zeros() as usize;
         let order = (order < self.heads.len()).then_some(order)?;
@@ -75,24 +72,30 @@ impl BuddyAllocator {
         }
     }
 
-    fn pop(&mut self, order: usize) -> Option<NonNull<PageMeta>> {
-        let mut page = self.heads[order]?;
-        unsafe {
-            let p = page.as_mut();
-            self.heads[order] = p.next.take();
-            p.status = Status::Reserved;
-            Some(page)
-        }
+    pub fn free(&mut self, page: OwnedPageMeta<Buddy>) {
+        // TODO: coalescing
+        self.push(page);
     }
 
-    fn push(&mut self, order: usize, mut page: NonNull<PageMeta>) {
-        unsafe {
-            let p = page.as_mut();
-            assert!((p.addr().as_raw() / PAGE_SIZE.get()).trailing_zeros() as usize >= order);
-            p.status = Status::Free;
-            p.order = order;
-            p.next = self.heads[order].replace(page);
-        }
+    pub(crate) fn free_lists(
+        &self,
+    ) -> impl Iterator<Item = (usize, Option<&OwnedPageMeta<Buddy>>)> {
+        self.heads
+            .iter()
+            .enumerate()
+            .map(|(order, head)| (order, head.as_ref()))
+    }
+
+    fn pop(&mut self, order: usize) -> Option<OwnedPageMeta<Buddy>> {
+        let mut owned = self.heads[order].take()?;
+        self.heads[order] = owned.next_mut().take();
+        Some(owned)
+    }
+
+    fn push(&mut self, mut page: OwnedPageMeta<Buddy>) {
+        let order = page.order();
+        *page.next_mut() = self.heads[order].take();
+        self.heads[order] = Some(page);
     }
 
     fn split(&mut self, order: usize) {
@@ -105,61 +108,14 @@ impl BuddyAllocator {
         }
 
         while current_order > order {
-            let Some(mut head) = self.pop(current_order) else {
+            let Some(head) = self.pop(current_order) else {
                 return;
             };
             current_order -= 1;
-            unsafe {
-                let head = head.as_mut();
-                let buddy_addr = head
-                    .addr()
-                    .checked_offset(PAGE_SIZE.get() * (1 << current_order))
-                    .unwrap();
-                let buddy = PAGE_META_MAP
-                    .lock()
-                    .page_meta_mut(buddy_addr)
-                    .map(NonNull::from)
-                    .expect("Buddy page metadata not found");
-                self.push(current_order, buddy);
-                self.push(current_order, NonNull::from(head));
-            }
+
+            let (head, buddy) = head.split();
+            self.push(buddy);
+            self.push(head);
         }
-    }
-}
-
-impl Debug for BuddyAllocator {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("BuddyAllocator")
-            .field("heads", &BuddyHeads(&self.heads))
-            .finish()
-    }
-}
-
-struct BuddyHeads<'a>(&'a [Option<NonNull<PageMeta>>; 10]);
-
-impl Debug for BuddyHeads<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut list = f.debug_list();
-        for (i, head) in self.0.iter().enumerate() {
-            match head {
-                Some(ptr) => {
-                    let page = unsafe { ptr.as_ref() };
-                    let len = {
-                        let mut count = 1;
-                        let mut cur = &page.next;
-                        while let Some(n) = cur {
-                            count += 1;
-                            cur = unsafe { &n.as_ref().next };
-                        }
-                        count
-                    };
-                    list.entry(&format_args!("order {}: {}, len={}", i, page.addr(), len));
-                }
-                None => {
-                    list.entry(&format_args!("order {}: None", i));
-                }
-            }
-        }
-        list.finish()
     }
 }

@@ -2,6 +2,13 @@ ARCH      ?= riscv64gc-unknown-none-elf
 LINKER_SCRIPT := src/arch/rv64/kernel.ld
 
 DEBUG ?= 0
+FEATURES ?=
+
+ifneq ($(strip $(FEATURES)),)
+FEATURE_FLAGS := --features "$(FEATURES)"
+else
+FEATURE_FLAGS :=
+endif
 
 ifeq ($(DEBUG),1)
 PROFILE       := debug
@@ -37,7 +44,7 @@ setup:
 	@scripts/setup.sh
 
 build:
-	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc --target=$(ARCH) $(CARGO_FLAGS)
+	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
 
 image: build
 	rust-objcopy $(OBJCOPY_FLAGS) -O binary $(KERNEL_ELF) $(KERNEL_IMG)
@@ -58,12 +65,12 @@ fmt:
 	./fmt
 
 clippy:
-	cargo clippy --target=$(ARCH)
+	cargo clippy --target=$(ARCH) $(FEATURE_FLAGS)
 
 typos:
 	typos
 
 test:
-	cargo test --lib
+	cargo test --lib $(FEATURE_FLAGS)
 
 check: fmt clippy typos test

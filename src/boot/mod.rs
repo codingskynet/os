@@ -5,7 +5,7 @@ use crate::boot::bump::{Alloc, BumpAllocator};
 use crate::dev::dt::{Fdt, prop};
 use crate::init::kernel_init;
 use crate::mm::addr::Pa;
-use crate::mm::page::{PageMeta, PageMetaSection};
+use crate::mm::page_meta::{PageMeta, PageMetaSection};
 use crate::mm::{BUDDY, PAGE_META_MAP};
 use crate::util::debug::dump_page_list;
 use crate::{console, println};
@@ -56,42 +56,51 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) {
 
         dump_page_list();
 
-        BUDDY.lock().initialize();
         println!("{:#?}", *BUDDY.lock());
         kernel_init();
     }
 }
 
 fn init_page_metadata(mut allocator: BumpAllocator) {
-    let mut page_meta_map = PAGE_META_MAP.lock();
     for memory in allocator.memories_mut() {
-        let region = memory.region();
-        let offset = region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE;
-        let end = region.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE;
+        let memory_region = memory.region();
+        let offset = memory_region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
+        let end = memory_region.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
         let len = end - offset;
-        let page_meta = memory
+        let page_meta_items = memory
             .alloc_slice(len, |i| {
-                PageMeta::free(Pa::new((offset + i) * PAGE_SIZE.get()))
+                PageMeta::uninit(Pa::new((offset + i) * PAGE_SIZE.get()))
             })
             .expect("Failed to allocate page metadata");
 
         // reserve outside RAM region
-        for page in &mut *page_meta {
-            let page_start = page.addr();
-            let page_end = page_start.checked_offset(PAGE_SIZE.get()).unwrap();
-            if page_start < region.start || region.end < page_end {
-                page.reserve();
+        for page_meta in &mut *page_meta_items {
+            let page_region = page_meta.region();
+            if page_region.start < memory_region.start || memory_region.end < page_region.end {
+                page_meta.owned_uninit().consume_as_reserved();
             }
         }
 
         for reserved in memory.reserved() {
-            let start = reserved.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE - offset;
-            let end = reserved.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE - offset;
-            for page in &mut page_meta[start..end] {
-                page.reserve();
+            // TODO: improve by selecting range
+            for page_meta in &mut *page_meta_items {
+                if !page_meta.is_uninit() {
+                    continue;
+                }
+                let page_region = page_meta.region();
+                if reserved
+                    .intersection(page_region)
+                    .is_some_and(|r| !r.is_empty())
+                {
+                    page_meta.owned_uninit().consume_as_reserved();
+                }
             }
         }
-        let section = PageMetaSection::new(page_meta, offset, region);
-        page_meta_map.add(section);
+
+        BUDDY.lock().initialize_section(&mut *page_meta_items);
+
+        // SAFETY: page metadata is initialized during single-threaded boot,
+        // before allocator hot paths can read PAGE_META_MAP concurrently.
+        unsafe { PAGE_META_MAP.add(PageMetaSection::new(page_meta_items, offset, memory_region)) };
     }
 }

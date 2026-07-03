@@ -64,6 +64,10 @@ impl Pa {
     pub const fn as_raw(&self) -> usize {
         self.0
     }
+
+    pub const fn aligned_order(&self, base: NonZeroUsize) -> usize {
+        (self.0 / base.get()).trailing_zeros() as usize
+    }
 }
 
 impl fmt::Display for Pa {
