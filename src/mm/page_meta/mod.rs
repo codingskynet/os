@@ -214,13 +214,6 @@ unsafe impl<S> Send for OwnedPageMeta<S> {}
 unsafe impl<S> Sync for OwnedPageMeta<S> {}
 
 impl<S> OwnedPageMeta<S> {
-    fn new(page_meta: &PageMeta) -> Self {
-        Self {
-            page_meta: NonNull::from(page_meta),
-            _marker: PhantomData,
-        }
-    }
-
     pub fn addr(&self) -> Pa {
         unsafe { self.page_meta.as_ref().addr() }
     }

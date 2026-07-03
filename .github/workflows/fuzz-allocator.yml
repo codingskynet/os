@@ -23,6 +23,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y qemu-system-misc
+          cargo install cargo-binutils
 
       - name: Run allocator fuzz in QEMU
         run: |

@@ -4,6 +4,7 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
 use crate::mm::page_meta::{OwnedPageMeta, PageMeta, PageMetaState, Slab, SlabPageMeta};
+use crate::util::linked_list::Node;
 
 pub enum Buddy {}
 pub struct BuddyPageMeta {
@@ -48,7 +49,7 @@ impl OwnedPageMeta<Buddy> {
     }
 
     pub fn split(mut self) -> (Self, Self) {
-        assert!(self.order() > 0, "single page buddy cannot be splitted");
+        assert!(self.order() > 0, "single page buddy cannot be split");
 
         let BuddyPageMeta { reserved, next } = self.deref_mut();
         assert!(next.is_none());
@@ -81,9 +82,7 @@ impl OwnedPageMeta<Buddy> {
             size,
             used: 0,
             free: None,
-            listed: false,
-            prev: None,
-            next: None,
+            node: Node::new(),
         });
         unsafe { self.page_meta.as_mut().owned() }
     }

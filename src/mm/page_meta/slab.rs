@@ -5,22 +5,16 @@ use core::ptr::NonNull;
 
 use crate::mm::addr::{Pa, Va};
 use crate::mm::page_meta::{BuddyPageMeta, OwnedPageMeta, PageMeta, PageMetaState};
+use crate::util::linked_list::{Node, Pointer};
 
 pub enum Slab {}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SlabPageHandle {
-    page_meta: NonNull<PageMeta>,
-}
 
 pub struct SlabPageMeta {
     pub buddy_meta: BuddyPageMeta,
     pub size: NonZeroUsize,
     pub used: usize,
     pub free: Option<Va>,
-    pub listed: bool,
-    pub prev: Option<SlabPageHandle>,
-    pub next: Option<SlabPageHandle>,
+    pub node: Node<SharedPageMeta>,
 }
 
 impl Deref for OwnedPageMeta<Slab> {
@@ -54,13 +48,8 @@ impl OwnedPageMeta<Slab> {
         free.is_none()
     }
 
-    pub fn next_mut(&mut self) -> &mut Option<SlabPageHandle> {
-        let SlabPageMeta { next, .. } = self.deref_mut();
-        next
-    }
-
-    pub fn into_handle(self) -> SlabPageHandle {
-        let handle = SlabPageHandle {
+    pub fn into_shared(self) -> SharedPageMeta {
+        let handle = SharedPageMeta {
             page_meta: self.page_meta,
         };
         mem::forget(self);
@@ -68,8 +57,41 @@ impl OwnedPageMeta<Slab> {
     }
 }
 
-impl SlabPageHandle {
-    pub unsafe fn new_unchecked(page_meta: &PageMeta) -> Self {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SharedPageMeta {
+    page_meta: NonNull<PageMeta>,
+}
+
+unsafe impl Send for SharedPageMeta {}
+
+impl Pointer for SharedPageMeta {
+    unsafe fn node(&self) -> *mut Node<Self> {
+        &self.deref().node as *const _ as *mut _
+    }
+}
+
+impl Deref for SharedPageMeta {
+    type Target = SlabPageMeta;
+
+    fn deref(&self) -> &Self::Target {
+        let PageMetaState::Slab(slab) = &**(unsafe { self.page_meta.as_ref() }) else {
+            unreachable!()
+        };
+        slab
+    }
+}
+
+impl DerefMut for SharedPageMeta {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let PageMetaState::Slab(slab) = &mut **(unsafe { self.page_meta.as_mut() }) else {
+            unreachable!()
+        };
+        slab
+    }
+}
+
+impl SharedPageMeta {
+    pub unsafe fn new(page_meta: &PageMeta) -> Self {
         Self {
             page_meta: NonNull::from(page_meta),
         }
@@ -79,25 +101,13 @@ impl SlabPageHandle {
         unsafe { self.page_meta.as_ref().addr() }
     }
 
-    pub fn slab(&self) -> &SlabPageMeta {
-        let PageMetaState::Slab(slab) = &**(unsafe { self.page_meta.as_ref() }) else {
-            unreachable!()
-        };
-        slab
-    }
-
-    pub unsafe fn slab_mut(&mut self) -> &mut SlabPageMeta {
-        let PageMetaState::Slab(slab) = &mut **(unsafe { self.page_meta.as_mut() }) else {
-            unreachable!()
-        };
-        slab
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.slab().used == 0
+        let SlabPageMeta { used, .. } = self.deref();
+        *used == 0
     }
 
     pub fn is_full(&self) -> bool {
-        self.slab().free.is_none()
+        let SlabPageMeta { free, .. } = self.deref();
+        free.is_none()
     }
 }

@@ -1,27 +1,28 @@
-ARCH      ?= riscv64gc-unknown-none-elf
-LINKER_SCRIPT := src/arch/rv64/kernel.ld
+ARCH         		?= riscv64gc-unknown-none-elf
+HOST_ARCH			?= $(shell rustc -vV | awk '/^host:/ { print $$2 }')
+LINKER_SCRIPT		:= src/arch/rv64/kernel.ld
 
-DEBUG ?= 0
-FEATURES ?=
+DEBUG				?= 0
+FEATURES			?=
 
 ifneq ($(strip $(FEATURES)),)
-FEATURE_FLAGS := --features "$(FEATURES)"
+FEATURE_FLAGS		:= --features "$(FEATURES)"
 else
-FEATURE_FLAGS :=
+FEATURE_FLAGS		:=
 endif
 
 ifeq ($(DEBUG),1)
-PROFILE       := debug
-KERNEL_IMG    := kernel-debug.img
-CARGO_FLAGS   :=
-OBJCOPY_FLAGS :=
-PROFILE_RUSTFLAGS := -C opt-level=1 # prevent large usage of stack and abosolute jump table
+PROFILE				:= debug
+KERNEL_IMG			:= kernel-debug.img
+CARGO_FLAGS			:=
+OBJCOPY_FLAGS 		:=
+PROFILE_RUSTFLAGS	:= -C opt-level=1 # prevent large usage of stack and abosolute jump table
 else
-PROFILE       := release
-KERNEL_IMG    := kernel.img
-CARGO_FLAGS   := --release
-OBJCOPY_FLAGS := --strip-all
-PROFILE_RUSTFLAGS :=
+PROFILE				:= release
+KERNEL_IMG			:= kernel.img
+CARGO_FLAGS			:= --release
+OBJCOPY_FLAGS		:= --strip-all $(if $(filter $(HOST_ARCH), riscv64), --target=$(ARCH))
+PROFILE_RUSTFLAGS	:=
 endif
 
 TARGET_DIR := target/$(ARCH)/$(PROFILE)
@@ -71,6 +72,6 @@ typos:
 	typos
 
 test:
-	cargo test --lib $(FEATURE_FLAGS)
+	cargo test --lib $(FEATURE_FLAGS) --target=$(HOST_ARCH)
 
 check: fmt clippy typos test

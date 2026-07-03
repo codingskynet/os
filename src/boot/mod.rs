@@ -2,12 +2,12 @@ mod bump;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::boot::bump::{Alloc, BumpAllocator};
+use crate::debug::dump_page_list;
 use crate::dev::dt::{Fdt, prop};
 use crate::init::kernel_init;
 use crate::mm::addr::Pa;
 use crate::mm::page_meta::{PageMeta, PageMetaSection};
 use crate::mm::{BUDDY, PAGE_META_MAP};
-use crate::util::debug::dump_page_list;
 use crate::{console, println};
 
 pub struct BootInfo {

@@ -60,36 +60,25 @@ impl Allocator {
 
         Some(size.next_power_of_two().trailing_zeros() as usize - SLAB_MIN_ORDER)
     }
-
-    fn alloc_buddy(layout: Layout) -> *mut u8 {
-        let size = layout.size().max(layout.align()).max(PAGE_SIZE.get());
-        let Some(size) = NonZeroUsize::new(size) else {
-            return ptr::null_mut();
-        };
-
-        match BUDDY.lock().alloc(size) {
-            Some(page) => {
-                let ptr = page.addr().into_va().as_mut_ptr();
-                mem::forget(page);
-                ptr
-            }
-            None => ptr::null_mut(),
-        }
-    }
-
-    unsafe fn dealloc_buddy(ptr: *mut u8) {
-        let page_meta = page_meta_at(Va::new(ptr as usize).into_pa());
-        let page = unsafe { page_meta.owned_buddy() };
-
-        BUDDY.lock().free(page);
-    }
 }
 
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         match Self::slab_index(layout) {
             Some(index) => self.slabs[index].lock().alloc(layout),
-            None => Self::alloc_buddy(layout),
+            None => {
+                let size = layout.size().max(layout.align()).max(PAGE_SIZE.get());
+                let size = NonZeroUsize::new(size).unwrap();
+
+                match BUDDY.lock().alloc(size) {
+                    Some(page) => {
+                        let ptr = page.addr().into_va().as_mut_ptr();
+                        mem::forget(page);
+                        ptr
+                    }
+                    None => ptr::null_mut(),
+                }
+            }
         }
     }
 
@@ -100,7 +89,12 @@ unsafe impl GlobalAlloc for Allocator {
 
         match Self::slab_index(layout) {
             Some(index) => unsafe { self.slabs[index].lock().dealloc(ptr) },
-            None => unsafe { Self::dealloc_buddy(ptr) },
+            None => {
+                let page_meta = page_meta_at(Va::new(ptr as usize).into_pa());
+                let page = unsafe { page_meta.owned_buddy() };
+
+                BUDDY.lock().free(page);
+            }
         }
     }
 }
