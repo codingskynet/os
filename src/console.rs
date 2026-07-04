@@ -29,6 +29,8 @@ macro_rules! debug {
     ($($arg:tt)*) => ({
         #[cfg(debug_assertions)]
         $crate::console::_print(format_args!("{}\n", format_args!($($arg)*)));
+        #[cfg(not(debug_assertions))]
+        let _ = format_args!($($arg)*);
     })
 }
 
