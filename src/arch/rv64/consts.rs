@@ -35,11 +35,11 @@ pub const LOWER_CANONICAL_END: usize = LOWER_CANONICAL_BASE + LOWER_CANONICAL_SI
 pub const NON_CANONICAL_HOLE_BASE: usize = 0x0000_0040_0000_0000;
 pub const NON_CANONICAL_HOLE_END: usize = 0xffff_ffc0_0000_0000;
 
-pub const UPPER_CANONICAL_BASE: usize = 0xffff_ffc0_0000_0000;
-pub const UPPER_CANONICAL_SIZE: usize = 256 * G;
+// pub const UPPER_CANONICAL_BASE: usize = 0xffff_ffc0_0000_0000;
+// pub const UPPER_CANONICAL_SIZE: usize = 256 * G;
 
-pub const MMIO_VMA_BASE: usize = 0xffff_ffc0_0000_0000;
-pub const MMIO_VMA_SIZE: usize = 64 * G;
+// pub const MMIO_VMA_BASE: usize = 0xffff_ffc0_0000_0000;
+// pub const MMIO_VMA_SIZE: usize = 64 * G;
 
 pub const DIRECT_VMA_BASE: usize = 0xffff_ffd0_0000_0000;
 pub const DIRECT_VMA_SIZE: usize = 128 * G;

@@ -105,6 +105,10 @@ impl BumpAllocator {
             reserved.push(Region::from_raw(&_rodata_start, &_rodata_end));
             reserved.push(Region::from_raw(&_data_start, &_data_end));
             reserved.push(Region::from_raw(&_bss_start, &_bss_end));
+            reserved.push(Region::from_raw(
+                fdt.as_ptr(),
+                fdt.as_ptr().wrapping_add(fdt.total_size()),
+            ));
             // TODO: add reserve-memory from FDT
             reserved.sort_unstable();
 

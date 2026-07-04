@@ -52,7 +52,7 @@ unsafe extern "C" fn after_mmu(hart_id: usize, dtb_ptr: Pa) -> ! {
     unsafe {
         let boot_info = BootInfo {
             boot_cpu_id: hart_id,
-            boot_data: BootData::DeviceTree(Fdt::new(dtb_ptr.into_va().as_ptr())),
+            boot_data: BootData::DeviceTree(Fdt::new(dtb_ptr.into_va().as_ptr()).unwrap()),
         };
 
         crate::boot::kernel_boot(boot_info);

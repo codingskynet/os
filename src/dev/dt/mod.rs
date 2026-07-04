@@ -84,9 +84,22 @@ impl Fdt {
     ///   or [`FdtWalker`] derived from it is used.
     /// * The header offsets and sizes describe readable regions inside the
     ///   same blob.
-    pub unsafe fn new(ptr: *const u8) -> Self {
+    pub unsafe fn new(ptr: *const u8) -> Option<Self> {
         let header = unsafe { FdtHeader::new(ptr) };
-        Self { ptr, header }
+        if header.magic() != 0xd00d_feed {
+            return None;
+        }
+        Some(Self { ptr, header })
+    }
+
+    /// Pointer to the start of the FDT blob.
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
+    /// Total size in bytes of the FDT blob, as reported by its header.
+    pub fn total_size(&self) -> usize {
+        self.header.total_size() as usize
     }
 
     /// Navigate to the node identified by an absolute device-tree path such as
@@ -388,7 +401,7 @@ mod tests {
     }
 
     fn qemu_fdt() -> Fdt {
-        unsafe { Fdt::new(QEMU_VIRT_DTB.as_ptr()) }
+        unsafe { Fdt::new(QEMU_VIRT_DTB.as_ptr()).unwrap() }
     }
 
     fn collect_props<'a>(walker: FdtWalker<'a>) -> Vec<Prop<'a>> {

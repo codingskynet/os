@@ -6,7 +6,6 @@
 mod arch;
 mod boot;
 mod console;
-mod debug;
 mod dev;
 mod init;
 mod kernel;
@@ -14,3 +13,6 @@ mod mm;
 mod panic;
 mod sync;
 mod util;
+
+#[allow(unused)]
+mod debug;

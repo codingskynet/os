@@ -91,7 +91,7 @@ mod tests {
     static QEMU_VIRT_DTB: &[u8] = include_bytes!("test_data/qemu_virt.dtb");
 
     fn qemu_fdt() -> Fdt {
-        unsafe { Fdt::new(QEMU_VIRT_DTB.as_ptr()) }
+        unsafe { Fdt::new(QEMU_VIRT_DTB.as_ptr()).unwrap() }
     }
 
     #[test]
