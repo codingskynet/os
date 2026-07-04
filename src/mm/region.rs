@@ -1,6 +1,4 @@
-use core::cmp::{max, min};
 use core::num::NonZeroUsize;
-use core::ops::BitAnd;
 
 use crate::mm::addr::{Pa, Va};
 
@@ -39,22 +37,7 @@ impl Region {
         self.start <= addr && addr < self.end
     }
 
-    pub fn intersection(&self, other: Region) -> Option<Self> {
-        let start = max(self.start, other.start);
-        let end = min(self.end, other.end);
-
-        if start <= end {
-            Some(Self { start, end })
-        } else {
-            None
-        }
-    }
-}
-
-impl BitAnd for Region {
-    type Output = Option<Region>;
-
-    fn bitand(self, rhs: Self) -> Self::Output {
-        self.intersection(rhs)
+    pub fn overlap(&self, other: Region) -> bool {
+        self.start < other.end && other.start < self.end
     }
 }

@@ -27,7 +27,7 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
     static mut TEMP_KERNEL_L1: PageTable = PageTable::new();
 
     unsafe {
-        let fdt = Fdt::new(dtb_ptr);
+        let fdt = Fdt::new(dtb_ptr).unwrap();
         let regs = MemoryIter::new(&fdt);
 
         // Build a temporary bootstrap address space:

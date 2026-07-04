@@ -53,6 +53,12 @@ impl PageMetaMap {
 
         panic!()
     }
+
+    pub fn is_same_section(&self, lhs: Pa, rhs: Pa) -> bool {
+        self.sections()
+            .iter()
+            .any(|section| section.region().contains(lhs) && section.region().contains(rhs))
+    }
 }
 
 pub struct PageMetaSection {

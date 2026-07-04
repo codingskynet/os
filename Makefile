@@ -16,7 +16,7 @@ PROFILE				:= debug
 KERNEL_IMG			:= kernel-debug.img
 CARGO_FLAGS			:=
 OBJCOPY_FLAGS 		:=
-PROFILE_RUSTFLAGS	:= -C opt-level=1 # prevent large usage of stack and abosolute jump table
+PROFILE_RUSTFLAGS	:= -C opt-level=1 -C debug-assertions=on # opt-level=1 prevents large usage of stack and abosolute jump table
 else
 PROFILE				:= release
 KERNEL_IMG			:= kernel.img

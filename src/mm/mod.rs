@@ -26,6 +26,10 @@ pub fn page_meta_at(addr: Pa) -> &'static PageMeta {
     PAGE_META_MAP.page_meta(addr)
 }
 
+pub fn is_same_page_meta_section(lhs: Pa, rhs: Pa) -> bool {
+    PAGE_META_MAP.is_same_section(lhs, rhs)
+}
+
 const SLAB_MIN_SIZE: usize = 32;
 const SLAB_MAX_SIZE: usize = 4096;
 const SLAB_MIN_ORDER: usize = SLAB_MIN_SIZE.trailing_zeros() as usize;

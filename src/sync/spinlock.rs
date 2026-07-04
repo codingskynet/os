@@ -45,14 +45,14 @@ impl<T> SpinLock<T> {
 
         SpinLockGuard {
             lock: self,
-            interrupt_guard,
+            _guard: interrupt_guard,
         }
     }
 }
 
 pub struct SpinLockGuard<'a, T: ?Sized + 'a> {
     lock: &'a SpinLock<T>,
-    interrupt_guard: InterruptGuard,
+    _guard: InterruptGuard,
 }
 
 impl<'a, T: ?Sized + 'a> Deref for SpinLockGuard<'a, T> {

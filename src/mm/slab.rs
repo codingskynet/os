@@ -7,12 +7,12 @@ use crate::arch::consts::PAGE_SIZE;
 use crate::mm::addr::Va;
 use crate::mm::page_meta::SharedPageMeta;
 use crate::mm::{BUDDY, page_meta_at};
-use crate::util::linked_list::LinkedList;
+use crate::util::linked_list::Pointer;
 
 pub struct SlabAllocator {
     slab_size: NonZeroUsize,
     block_size: NonZeroUsize,
-    available: LinkedList<SharedPageMeta>,
+    head: Option<SharedPageMeta>,
 }
 
 impl SlabAllocator {
@@ -26,7 +26,7 @@ impl SlabAllocator {
         Self {
             slab_size: NonZeroUsize::new(size).unwrap(),
             block_size: NonZeroUsize::new(block).unwrap(),
-            available: LinkedList::new(),
+            head: None,
         }
     }
 
@@ -34,10 +34,11 @@ impl SlabAllocator {
         debug_assert!(layout.size() <= self.slab_size.get());
         debug_assert!(layout.align() <= self.slab_size.get());
 
-        if let Some(block) = self.available.head() {
+        if let Some(mut block) = self.head {
             let ptr = self.alloc_from_block(block);
             if block.is_full() {
-                unsafe { self.available.remove(block) };
+                self.head = block.node().next();
+                block.pop();
             }
             return ptr;
         }
@@ -49,7 +50,7 @@ impl SlabAllocator {
 
         let ptr = self.alloc_from_block(block);
         if !block.is_full() {
-            unsafe { self.available.push_front(block) };
+            self.insert(block);
         }
 
         ptr
@@ -66,9 +67,27 @@ impl SlabAllocator {
         let was_full = block.is_full();
         self.free_to_block(block, slab);
 
-        if was_full {
-            unsafe { self.available.push_front(block) };
+        if block.is_empty() {
+            self.remove(block);
+            let page = unsafe { block.into_owned() }.into_buddy();
+            BUDDY.lock().free(page);
+        } else if was_full {
+            self.insert(block);
         }
+    }
+
+    fn insert(&mut self, block: SharedPageMeta) {
+        if let Some(head) = self.head {
+            head.push_front(block);
+        }
+        self.head = Some(block);
+    }
+
+    fn remove(&mut self, mut block: SharedPageMeta) {
+        if self.head == Some(block) {
+            self.head = block.node().next();
+        }
+        block.pop();
     }
 
     fn alloc_from_block(&self, mut block: SharedPageMeta) -> *mut u8 {

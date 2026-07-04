@@ -2,7 +2,6 @@ mod bump;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::boot::bump::{Alloc, BumpAllocator};
-use crate::debug::dump_page_list;
 use crate::dev::dt::{Fdt, prop};
 use crate::init::kernel_init;
 use crate::mm::addr::Pa;
@@ -10,6 +9,7 @@ use crate::mm::page_meta::{PageMeta, PageMetaSection};
 use crate::mm::{BUDDY, PAGE_META_MAP};
 use crate::{console, println};
 
+#[allow(unused)]
 pub struct BootInfo {
     /// Hardware identifier of the CPU that entered the common kernel path.
     pub boot_cpu_id: usize,
@@ -54,9 +54,6 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) {
             }
         }
 
-        dump_page_list();
-
-        println!("{:#?}", *BUDDY.lock());
         kernel_init();
     }
 }
@@ -88,10 +85,7 @@ fn init_page_metadata(mut allocator: BumpAllocator) {
                     continue;
                 }
                 let page_region = page_meta.region();
-                if reserved
-                    .intersection(page_region)
-                    .is_some_and(|r| !r.is_empty())
-                {
+                if reserved.overlap(page_region) {
                     page_meta.owned_uninit().consume_as_reserved();
                 }
             }

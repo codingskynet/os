@@ -1,7 +1,8 @@
-use core::cmp::min;
+use core::cmp::{Ordering, min};
 use core::num::NonZeroUsize;
 
 use crate::arch::consts::PAGE_SIZE;
+use crate::mm::addr::Pa;
 use crate::mm::page_meta::{Buddy, OwnedPageMeta, PageMeta, RefMutSliceOfPageMetaExt};
 
 pub struct BuddyAllocator {
@@ -72,8 +73,21 @@ impl BuddyAllocator {
         }
     }
 
-    pub fn free(&mut self, page: OwnedPageMeta<Buddy>) {
-        // TODO: coalescing
+    pub fn free(&mut self, mut page: OwnedPageMeta<Buddy>) {
+        loop {
+            let order = page.order();
+            if order == self.heads.len() - 1 {
+                break;
+            }
+
+            if let Some(buddy_addr) = page.buddy_addr()
+                && let Some(buddy) = self.take(order, buddy_addr)
+            {
+                page = page.merge(buddy);
+            } else {
+                break;
+            }
+        }
         self.push(page);
     }
 
@@ -93,9 +107,37 @@ impl BuddyAllocator {
     }
 
     fn push(&mut self, mut page: OwnedPageMeta<Buddy>) {
-        let order = page.order();
-        *page.next_mut() = self.heads[order].take();
-        self.heads[order] = Some(page);
+        let addr = page.addr();
+        let mut node = &mut self.heads[page.order()];
+        loop {
+            match node.as_ref().map(|node| node.addr().cmp(&addr)) {
+                Some(Ordering::Less) => {
+                    node = node.as_mut().unwrap().next_mut();
+                }
+                _ => {
+                    *page.next_mut() = node.take();
+                    *node = Some(page);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn take(&mut self, order: usize, addr: Pa) -> Option<OwnedPageMeta<Buddy>> {
+        let mut node = &mut self.heads[order];
+        loop {
+            match node.as_ref().map(|page| page.addr().cmp(&addr)) {
+                Some(Ordering::Less) => {
+                    node = node.as_mut().unwrap().next_mut();
+                }
+                Some(Ordering::Equal) => {
+                    let mut page = node.take().unwrap();
+                    *node = page.next_mut().take();
+                    return Some(page);
+                }
+                Some(Ordering::Greater) | None => return None,
+            }
+        }
     }
 
     fn split(&mut self, order: usize) {

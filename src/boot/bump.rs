@@ -15,11 +15,6 @@ use crate::{debug, println};
 pub trait Alloc {
     fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Result<Pa, Error>;
 
-    fn alloc<T>(&mut self, init: impl FnOnce() -> T) -> Result<&'static mut T, Error> {
-        let ptr = self.alloc_uninit()?;
-        Ok(ptr.write(init()))
-    }
-
     fn alloc_slice<T>(
         &mut self,
         len: usize,
@@ -110,6 +105,10 @@ impl BumpAllocator {
             reserved.push(Region::from_raw(&_rodata_start, &_rodata_end));
             reserved.push(Region::from_raw(&_data_start, &_data_end));
             reserved.push(Region::from_raw(&_bss_start, &_bss_end));
+            reserved.push(Region::from_raw(
+                fdt.as_ptr(),
+                fdt.as_ptr().wrapping_add(fdt.total_size()),
+            ));
             // TODO: add reserve-memory from FDT
             reserved.sort_unstable();
 
@@ -209,10 +208,8 @@ pub struct RegionSet<const N: usize> {
     regions: ArrayVec<Region, N>,
 }
 
-fn is_overlap(region: Region, other: Option<Region>) -> bool {
-    other
-        .map(|other| region.intersection(other).is_some_and(|r| !r.is_empty()))
-        .unwrap_or(false)
+fn overlap(region: Region, other: Option<Region>) -> bool {
+    other.is_some_and(|other| region.overlap(other))
 }
 
 impl<const N: usize> RegionSet<N> {
@@ -232,7 +229,7 @@ impl<const N: usize> RegionSet<N> {
         }
 
         let (_, left, right) = self.neighbors(region);
-        !is_overlap(region, left) && !is_overlap(region, right)
+        !overlap(region, left) && !overlap(region, right)
     }
 
     pub fn alloc(&mut self, region: Region) -> Result<(), Region> {
@@ -241,7 +238,7 @@ impl<const N: usize> RegionSet<N> {
         }
 
         let (index, left, right) = self.neighbors(region);
-        if is_overlap(region, left) || is_overlap(region, right) {
+        if overlap(region, left) || overlap(region, right) {
             return Err(region);
         }
         if let Some(left) = left

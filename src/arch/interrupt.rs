@@ -18,7 +18,9 @@ unsafe impl Sync for InterruptGuard {}
 impl InterruptGuard {
     pub fn new() -> Self {
         let was_enabled = arch::asm::interrupt::is_enabled();
-        arch::asm::interrupt::disable();
+        if was_enabled {
+            arch::asm::interrupt::disable();
+        }
         Self {
             was_enabled,
             _marker: PhantomData,

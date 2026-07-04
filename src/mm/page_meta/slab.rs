@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
 use crate::mm::addr::{Pa, Va};
-use crate::mm::page_meta::{BuddyPageMeta, OwnedPageMeta, PageMeta, PageMetaState};
+use crate::mm::page_meta::{Buddy, BuddyPageMeta, OwnedPageMeta, PageMeta, PageMetaState};
 use crate::util::linked_list::{Node, Pointer};
 
 pub enum Slab {}
@@ -38,22 +38,33 @@ impl DerefMut for OwnedPageMeta<Slab> {
 }
 
 impl OwnedPageMeta<Slab> {
-    pub fn is_empty(&self) -> bool {
-        let SlabPageMeta { used, .. } = self.deref();
-        *used == 0
-    }
-
-    pub fn is_full(&self) -> bool {
-        let SlabPageMeta { free, .. } = self.deref();
-        free.is_none()
-    }
-
     pub fn into_shared(self) -> SharedPageMeta {
         let handle = SharedPageMeta {
             page_meta: self.page_meta,
         };
         mem::forget(self);
         handle
+    }
+
+    pub fn into_buddy(mut self) -> OwnedPageMeta<Buddy> {
+        let PageMetaState::Slab(SlabPageMeta {
+            buddy_meta,
+            used,
+            free,
+            node,
+            ..
+        }) = mem::replace(self.as_mut(), PageMetaState::Uninit)
+        else {
+            unreachable!()
+        };
+
+        debug_assert!(used == 0);
+        debug_assert!(free.is_some());
+        debug_assert!(!node.is_linked());
+
+        debug_assert!(buddy_meta.next.is_none());
+        *self.as_mut() = PageMetaState::Buddy(buddy_meta);
+        unsafe { self.page_meta.as_mut().owned() }
     }
 }
 
@@ -65,8 +76,8 @@ pub struct SharedPageMeta {
 unsafe impl Send for SharedPageMeta {}
 
 impl Pointer for SharedPageMeta {
-    unsafe fn node(&self) -> *mut Node<Self> {
-        &self.deref().node as *const _ as *mut _
+    fn node(&mut self) -> &mut Node<Self> {
+        &mut self.deref_mut().node
     }
 }
 
@@ -95,6 +106,10 @@ impl SharedPageMeta {
         Self {
             page_meta: NonNull::from(page_meta),
         }
+    }
+
+    pub unsafe fn into_owned(mut self) -> OwnedPageMeta<Slab> {
+        unsafe { self.page_meta.as_mut().owned() }
     }
 
     pub fn addr(&self) -> Pa {
