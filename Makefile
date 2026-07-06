@@ -26,10 +26,10 @@ PROFILE_RUSTFLAGS	:=
 endif
 
 TARGET_DIR := target/$(ARCH)/$(PROFILE)
-KERNEL_ELF := $(TARGET_DIR)/kernel
-KERNEL_IMG := $(KERNEL_BASENAME).bin
-KERNEL_ELF_ARTIFACT := $(KERNEL_BASENAME).elf
-KERNEL_DEBUGINFO := $(KERNEL_BASENAME).debug
+KERNEL_ARTIFACT := $(TARGET_DIR)/kernel
+KERNEL_ELF := $(KERNEL_BASENAME).elf
+KERNEL_DEBUG := $(KERNEL_BASENAME).debug
+KERNEL_BIN := $(KERNEL_BASENAME).bin
 
 MEMORY     := 64M
 
@@ -51,9 +51,9 @@ build:
 	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
 
 image: build
-	cp $(KERNEL_ELF) $(KERNEL_ELF_ARTIFACT)
-	rust-objcopy --only-keep-debug $(KERNEL_ELF) $(KERNEL_DEBUGINFO)
-	rust-objcopy $(OBJCOPY_FLAGS) -O binary $(KERNEL_ELF) $(KERNEL_IMG)
+	cp $(KERNEL_ARTIFACT) $(KERNEL_ELF)
+	rust-objcopy --only-keep-debug $(KERNEL_ARTIFACT) $(KERNEL_DEBUG)
+	rust-objcopy $(OBJCOPY_FLAGS) -O binary $(KERNEL_ARTIFACT) $(KERNEL_BIN)
 
 run: image
 	qemu-system-riscv64 \
@@ -61,7 +61,7 @@ run: image
 		-m $(MEMORY) \
 		-nographic \
 		-bios none \
-		-kernel $(KERNEL_IMG)
+		-kernel $(KERNEL_BIN)
 
 clean:
 	rm -f kernel.bin kernel-debug.bin kernel.elf kernel-debug.elf kernel.debug kernel-debug.debug
