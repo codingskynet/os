@@ -1,4 +1,4 @@
 /target
 
-kernel.img
-kernel-debug.img
+kernel.*
+kernel-debug.*

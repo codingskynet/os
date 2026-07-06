@@ -6,10 +6,10 @@ The toy project for implementing OS
 
 ```bash
 make setup          # install dependencies including QEMU
-make run            # build + create kernel.img + boot on QEMU
+make run            # build + create kernel.img/kernel.elf/kernel.debug + boot on QEMU
 make run DEBUG=1    # build debug image + boot on QEMU
 make build          # build only (ELF)
-make image          # build + create kernel.img
+make image          # build + create boot image + profiler/debug artifacts
 make clean          # remove artifacts
 ```
 

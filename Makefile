@@ -13,13 +13,13 @@ endif
 
 ifeq ($(DEBUG),1)
 PROFILE				:= debug
-KERNEL_IMG			:= kernel-debug.img
+KERNEL_BASENAME		:= kernel-debug
 CARGO_FLAGS			:=
 OBJCOPY_FLAGS 		:=
-PROFILE_RUSTFLAGS	:= -C opt-level=1 -C debug-assertions=on # opt-level=1 prevents large usage of stack and abosolute jump table
+PROFILE_RUSTFLAGS	:= -C opt-level=1 -C debug-assertions=on # opt-level=1 prevents large usage of stack and absolute jump table
 else
 PROFILE				:= release
-KERNEL_IMG			:= kernel.img
+KERNEL_BASENAME		:= kernel
 CARGO_FLAGS			:= --release
 OBJCOPY_FLAGS		:= --strip-all $(if $(filter $(HOST_ARCH), riscv64), --target=$(ARCH))
 PROFILE_RUSTFLAGS	:=
@@ -27,6 +27,9 @@ endif
 
 TARGET_DIR := target/$(ARCH)/$(PROFILE)
 KERNEL_ELF := $(TARGET_DIR)/kernel
+KERNEL_IMG := $(KERNEL_BASENAME).bin
+KERNEL_ELF_ARTIFACT := $(KERNEL_BASENAME).elf
+KERNEL_DEBUGINFO := $(KERNEL_BASENAME).debug
 
 MEMORY     := 64M
 
@@ -48,6 +51,8 @@ build:
 	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
 
 image: build
+	cp $(KERNEL_ELF) $(KERNEL_ELF_ARTIFACT)
+	rust-objcopy --only-keep-debug $(KERNEL_ELF) $(KERNEL_DEBUGINFO)
 	rust-objcopy $(OBJCOPY_FLAGS) -O binary $(KERNEL_ELF) $(KERNEL_IMG)
 
 run: image
@@ -59,7 +64,7 @@ run: image
 		-kernel $(KERNEL_IMG)
 
 clean:
-	rm -f kernel.img kernel-debug.img
+	rm -f kernel.bin kernel-debug.bin kernel.elf kernel-debug.elf kernel.debug kernel-debug.debug
 	cargo clean
 
 fmt:
