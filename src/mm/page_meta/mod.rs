@@ -212,9 +212,6 @@ pub struct OwnedPageMeta<S> {
 // metadata. Moving the token to another hart transfers that ownership.
 unsafe impl<S> Send for OwnedPageMeta<S> {}
 
-// TODO?
-unsafe impl<S> Sync for OwnedPageMeta<S> {}
-
 impl<S> OwnedPageMeta<S> {
     pub fn addr(&self) -> Pa {
         unsafe { self.page_meta.as_ref().addr() }

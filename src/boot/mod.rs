@@ -32,7 +32,7 @@ pub enum BootData {
 ///
 /// # Safety
 /// It must be called with a valid stack pointer and BSS already zeroed.
-pub unsafe fn kernel_boot(boot_info: BootInfo) {
+pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
     unsafe {
         let mut token = FreezableToken::new();
         match &boot_info.boot_data {

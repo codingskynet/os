@@ -29,6 +29,7 @@ pub mod asm;
 pub mod consts;
 mod paging;
 pub mod regs;
+pub mod switch;
 pub mod trap;
 
 use core::arch::global_asm;
@@ -75,9 +76,5 @@ unsafe extern "C" fn _after_mmu(hart_id: usize, dtb_ptr: Pa) -> ! {
         };
 
         crate::boot::kernel_boot(boot_info);
-    }
-
-    loop {
-        core::hint::spin_loop();
     }
 }

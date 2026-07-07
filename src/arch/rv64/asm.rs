@@ -38,6 +38,22 @@ pub mod interrupt {
     }
 }
 
+pub mod reg {
+    use super::*;
+
+    pub fn sp() -> usize {
+        let sp: usize;
+        unsafe {
+            asm!(
+                "mv {sp}, sp",
+                sp = out(reg) sp,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+        sp
+    }
+}
+
 pub mod time {
     use super::*;
 

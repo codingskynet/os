@@ -1,5 +1,12 @@
+use crate::arch::switch::_kernel_thread_trampoline;
+use crate::mm::addr::Va;
+
 macro_rules! regs {
-    ($vis:vis struct $name:ident { $($reg:ident),+ $(,)? }) => {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident { $($reg:ident),+ $(,)? }
+    ) => {
+        $(#[$meta])*
         #[repr(C)]
         $vis struct $name {
             $(
@@ -10,6 +17,7 @@ macro_rules! regs {
 }
 
 regs! {
+    #[derive(Default)]
     pub struct GeneralRegs {
         ra, sp, gp, tp,
         a0, a1, a2, a3, a4, a5, a6, a7,
@@ -18,4 +26,10 @@ regs! {
     }
 }
 
-impl GeneralRegs {}
+impl GeneralRegs {
+    pub fn as_kernel_thread_trampoline(&mut self, sp: Va, entry: Va) {
+        self.ra = _kernel_thread_trampoline as *const () as usize;
+        self.sp = sp.as_raw();
+        self.a0 = entry.as_raw();
+    }
+}

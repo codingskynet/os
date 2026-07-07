@@ -45,6 +45,40 @@ pub fn smoke() {
 
         debug!("page fault smoke: recovered");
     }
+    #[cfg(feature = "smoke-kernel-thread")]
+    smoke_kernel_threads();
+}
+
+#[cfg(feature = "smoke-kernel-thread")]
+fn smoke_kernel_threads() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::kernel::thread;
+
+    const THREADS: usize = 16;
+    const ITERATIONS: usize = 8;
+
+    static DONE: AtomicUsize = AtomicUsize::new(0);
+
+    DONE.store(0, Ordering::Relaxed);
+    printlnk!("smoke-kernel-thread: start threads={THREADS} iterations={ITERATIONS}");
+
+    for thread_id in 0..THREADS {
+        thread::spawn(move || {
+            for iteration in 0..ITERATIONS {
+                printlnk!("smoke-kernel-thread: kernel thread {thread_id:02} iter {iteration:02}");
+                thread::yield_now();
+            }
+
+            DONE.fetch_add(1, Ordering::Relaxed);
+        });
+    }
+
+    while DONE.load(Ordering::Relaxed) != THREADS {
+        thread::yield_now();
+    }
+
+    printlnk!("smoke-kernel-thread: done threads={THREADS} iterations={ITERATIONS}");
 }
 
 pub fn dump_page_list() {

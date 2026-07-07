@@ -6,9 +6,10 @@ edition = "2024"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-smoke = ["smoke-allocator", "smoke-page-fault"]
+smoke = ["smoke-allocator", "smoke-page-fault", "smoke-kernel-thread"]
 smoke-allocator = []
 smoke-page-fault = []
+smoke-kernel-thread = []
 
 [[bin]]
 name = "kernel"

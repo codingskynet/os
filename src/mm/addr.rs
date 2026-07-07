@@ -97,6 +97,12 @@ impl<T> From<&mut T> for Va {
     }
 }
 
+impl<T> From<*mut T> for Va {
+    fn from(value: *mut T) -> Self {
+        Va(value as usize)
+    }
+}
+
 impl Va {
     pub const fn new(addr: usize) -> Self {
         Self(addr)

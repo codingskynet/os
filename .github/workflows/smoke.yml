@@ -48,4 +48,15 @@ jobs:
 
           grep -q "allocator fuzz: ok" qemu-smoke.log
           grep -q "page fault smoke: recovered" qemu-smoke.log
+          grep -q "smoke-kernel-thread: done threads=16 iterations=8" qemu-smoke.log
+          grep -o "smoke-kernel-thread: kernel thread [0-9][0-9] iter [0-9][0-9]" qemu-smoke.log \
+            | sort > qemu-smoke-kernel-thread.actual
+
+          for thread in $(seq 0 15); do
+            for iteration in $(seq 0 7); do
+              printf "smoke-kernel-thread: kernel thread %02d iter %02d\n" "$thread" "$iteration"
+            done
+          done | sort > qemu-smoke-kernel-thread.expected
+
+          diff -u qemu-smoke-kernel-thread.expected qemu-smoke-kernel-thread.actual
           ! grep -q "kernel panic" qemu-smoke.log
