@@ -10,4 +10,6 @@ fn main() {
     println!("cargo:rustc-link-arg-bin=kernel=--defsym=KERNEL_LMA_BASE={KERNEL_LMA_BASE:#x}");
     println!("cargo:rustc-link-arg-bin=kernel=--defsym=KERNEL_VMA_BASE={KERNEL_VMA_BASE:#x}");
     println!("cargo:rustc-link-arg-bin=kernel=--defsym=KERNEL_VMA_OFFSET={KERNEL_VMA_OFFSET:#x}");
+    println!("cargo:rustc-link-arg-bin=kernel=--defsym=PAGE_SIZE={PAGE_SIZE:#x}");
+    println!("cargo:rustc-link-arg-bin=kernel=--defsym=HUGE_PAGE_SIZE={HUGE_PAGE_SIZE:#x}");
 }

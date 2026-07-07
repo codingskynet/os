@@ -100,10 +100,7 @@ impl BumpAllocator {
         );
 
         let mut reserved: ArrayVec<Region, 32> = ArrayVec::new();
-        reserved.push(arch::region::text());
-        reserved.push(arch::region::rodata());
-        reserved.push(arch::region::data());
-        reserved.push(arch::region::bss());
+        reserved.push(arch::region::kernel());
         reserved.push(Region::from_raw(
             fdt.as_ptr(),
             fdt.as_ptr().wrapping_add(fdt.total_size()),

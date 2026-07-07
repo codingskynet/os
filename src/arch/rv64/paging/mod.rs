@@ -16,15 +16,15 @@ use crate::dev::uart::ns16550::NS16550;
 use crate::kernel::console::{CONSOLE, Console};
 use crate::mm::addr::{Pa, Va};
 use crate::mm::region::Region;
-use crate::util::consts::{G, M};
+use crate::util::consts::G;
 
 pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const u8) -> ! {
     const L2_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(1 * G).unwrap();
-    const L1_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(2 * M).unwrap();
+    const L1_PAGE_SIZE: NonZeroUsize = HUGE_PAGE_SIZE;
 
     // Temporary Sv39 root page table using 1GiB leaf mapping for whole memory
     static mut TEMP_ROOT: PageTable = PageTable::new();
-    // Temporary Sv39 L1 page table using 2MiB leaf mapping for kernel
+    // Temporary Sv39 L1 page table using huge-page leaf mappings for the kernel
     static mut TEMP_KERNEL_L1: PageTable = PageTable::new();
 
     unsafe {
@@ -181,7 +181,7 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
     }
 
     // Map the high kernel image with page-granular permissions
-    // with page-aligned boundary between different permissions
+    // and page-aligned boundaries between RX, RO, and RW regions.
     {
         assert_eq!(
             region::kernel().start.into_kernel_va(),
@@ -190,6 +190,8 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
         );
         assert_eq!(region::rx().start.align_down(PAGE_SIZE), region::rx().start);
         assert_eq!(region::rx().end.align_down(PAGE_SIZE), region::rx().end);
+        assert_eq!(region::r().start.align_down(PAGE_SIZE), region::r().start);
+        assert_eq!(region::r().end.align_down(PAGE_SIZE), region::r().end);
         assert_eq!(region::rw().start.align_down(PAGE_SIZE), region::rw().start);
         assert_eq!(region::rw().end.align_down(PAGE_SIZE), region::rw().end);
 
@@ -199,6 +201,13 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
             &mut alloc,
             Pa::into_kernel_va,
             PteFlags::R | PteFlags::X,
+        );
+        map_region(
+            root,
+            region::r(),
+            &mut alloc,
+            Pa::into_kernel_va,
+            PteFlags::R,
         );
         map_region(
             root,

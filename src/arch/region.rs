@@ -6,11 +6,16 @@ pub fn kernel() -> Region {
 }
 
 pub fn rx() -> Region {
-    unsafe { Region::from_raw(&_text_start, &_rodata_end) }
+    text()
+}
+
+pub fn r() -> Region {
+    rodata()
 }
 
 pub fn rw() -> Region {
-    unsafe { Region::from_raw(&_data_start, &_bss_end) }
+    debug_assert!(data().start <= bss().end);
+    Region::new(data().start, bss().end).unwrap()
 }
 
 pub fn text() -> Region {

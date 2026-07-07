@@ -55,4 +55,5 @@ pub const KERNEL_VMA_SIZE: usize = 256 * M;
 pub const KERNEL_LMA_BASE: usize = 0x8000_0000;
 pub const KERNEL_VMA_OFFSET: usize = KERNEL_VMA_BASE - KERNEL_LMA_BASE;
 
-pub const PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(1 << 12).unwrap();
+pub const PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(4 * K).unwrap();
+pub const HUGE_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(2 * M).unwrap();
