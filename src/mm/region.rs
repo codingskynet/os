@@ -18,6 +18,7 @@ impl Region {
     }
 
     pub fn from_raw(start: *const u8, end: *const u8) -> Self {
+        assert!(start <= end);
         Self {
             start: Va::new(start.addr()).into_pa(),
             end: Va::new(end.addr()).into_pa(),

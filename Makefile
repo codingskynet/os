@@ -37,7 +37,8 @@ RUSTFLAGS := \
 	-C code-model=medium \
 	-C relocation-model=static \
 	-C link-arg=--script=$(LINKER_SCRIPT) \
-	-C link-arg=--no-relax
+	-C link-arg=--no-relax \
+	-C link-arg=--orphan-handling=error
 
 .PHONY: all setup build image run clean fmt clippy typos test check
 

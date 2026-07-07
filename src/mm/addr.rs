@@ -61,6 +61,10 @@ impl Pa {
         Va(self.0.checked_add(DIRECT_VMA_BASE).expect("invalid Pa"))
     }
 
+    pub const fn into_kernel_va(self) -> Va {
+        Va(self.0.checked_add(KERNEL_VMA_OFFSET).expect("invalid Pa"))
+    }
+
     pub const fn as_raw(&self) -> usize {
         self.0
     }

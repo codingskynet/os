@@ -232,5 +232,7 @@ park:
     wfi
     j park
 
+.section .bss.stack, "aw", @nobits
+.balign 16
 stacks:
     .skip STACK_SIZE * 8            # allocate space for the harts stacks

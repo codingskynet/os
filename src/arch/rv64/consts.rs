@@ -8,8 +8,8 @@ use consts::*;
 
 unsafe extern "C" {
     pub static _kernel_start: u8;
-    pub static _stext: u8;
-    pub static _etext: u8;
+    pub static _text_start: u8;
+    pub static _text_end: u8;
     pub static _rodata_start: u8;
     pub static _rodata_end: u8;
     pub static _data_start: u8;
@@ -55,4 +55,5 @@ pub const KERNEL_VMA_SIZE: usize = 256 * M;
 pub const KERNEL_LMA_BASE: usize = 0x8000_0000;
 pub const KERNEL_VMA_OFFSET: usize = KERNEL_VMA_BASE - KERNEL_LMA_BASE;
 
-pub const PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(1 << 12).unwrap();
+pub const PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(4 * K).unwrap();
+pub const HUGE_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(2 * M).unwrap();
