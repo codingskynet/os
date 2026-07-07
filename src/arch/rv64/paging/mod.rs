@@ -161,16 +161,22 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
     // create direct map for physical RAM section(QEMU: 0x8000_0000 ~)
     {
         let regs = MemoryIter::new(fdt);
+        let kernel = region::kernel();
+        assert_eq!(kernel.start.align_down(PAGE_SIZE), kernel.start);
+        assert_eq!(kernel.end.align_down(PAGE_SIZE), kernel.end);
+
+        let flags = PteFlags::R | PteFlags::W;
         for (addr, size) in regs {
             let region = Region::from_size(Pa::new(addr as usize), size).unwrap();
-            // TODO: skip kernel binary area
-            map_region(
-                root,
-                region,
-                &mut alloc,
-                Pa::into_va,
-                PteFlags::R | PteFlags::W,
-            );
+
+            let mut pa = region.start.align_down(PAGE_SIZE);
+            let end = region.end.align_up(PAGE_SIZE);
+            while pa < end {
+                if !kernel.contains(pa) {
+                    map(root, pa.into_va(), &mut alloc, flags);
+                }
+                pa = pa.checked_offset(PAGE_SIZE.get()).unwrap();
+            }
         }
     }
 

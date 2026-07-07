@@ -5,7 +5,6 @@ use core::slice::{self, Iter};
 
 use arrayvec::ArrayVec;
 
-use crate::arch::consts::*;
 use crate::arch::{self};
 use crate::dev::dt::Fdt;
 use crate::dev::dt::memory::MemoryIter;
@@ -87,48 +86,46 @@ impl Alloc for BumpAllocator {
 }
 
 impl BumpAllocator {
-    pub unsafe fn new(fdt: &Fdt) -> Result<Self, Error> {
-        unsafe {
-            let regs = MemoryIter::new(fdt);
-            let mut memory = ArrayVec::from_iter(
-                regs.into_iter()
-                    .map(|(addr, size)| {
-                        let addr = Pa::new(addr as usize);
-                        (addr, addr.checked_offset(size.get()).unwrap())
-                    })
-                    .inspect(|(from, to)| debug!("bump: register memory {from} ~ {to}"))
-                    .map(|(from, to)| Region::new(from, to).unwrap())
-                    .map(Memory::new),
-            );
+    pub fn new(fdt: &Fdt) -> Result<Self, Error> {
+        let regs = MemoryIter::new(fdt);
+        let mut memory = ArrayVec::from_iter(
+            regs.into_iter()
+                .map(|(addr, size)| {
+                    let addr = Pa::new(addr as usize);
+                    (addr, addr.checked_offset(size.get()).unwrap())
+                })
+                .inspect(|(from, to)| debug!("bump: register memory {from} ~ {to}"))
+                .map(|(from, to)| Region::new(from, to).unwrap())
+                .map(Memory::new),
+        );
 
-            let mut reserved: ArrayVec<Region, 32> = ArrayVec::new();
-            reserved.push(arch::region::text());
-            reserved.push(arch::region::rodata());
-            reserved.push(arch::region::data());
-            reserved.push(arch::region::bss());
-            reserved.push(Region::from_raw(
-                fdt.as_ptr(),
-                fdt.as_ptr().wrapping_add(fdt.total_size()),
-            ));
-            // TODO: add reserve-memory from FDT
-            reserved.sort_unstable();
+        let mut reserved: ArrayVec<Region, 32> = ArrayVec::new();
+        reserved.push(arch::region::text());
+        reserved.push(arch::region::rodata());
+        reserved.push(arch::region::data());
+        reserved.push(arch::region::bss());
+        reserved.push(Region::from_raw(
+            fdt.as_ptr(),
+            fdt.as_ptr().wrapping_add(fdt.total_size()),
+        ));
+        // TODO: add reserve-memory from FDT
+        reserved.sort_unstable();
 
-            for r in reserved {
-                debug!("bump: reserve {r:?}");
-                let mut reserved = false;
-                for mem in memory.iter_mut() {
-                    if mem.reserve(r).is_ok() {
-                        reserved = true;
-                        break;
-                    }
-                }
-                if !reserved {
-                    printlnk!("bump: failed to reserve region: {r:?}");
+        for r in reserved {
+            debug!("bump: reserve {r:?}");
+            let mut reserved = false;
+            for mem in memory.iter_mut() {
+                if mem.reserve(r).is_ok() {
+                    reserved = true;
+                    break;
                 }
             }
-
-            Ok(Self { memories: memory })
+            if !reserved {
+                printlnk!("bump: failed to reserve region: {r:?}");
+            }
         }
+
+        Ok(Self { memories: memory })
     }
 
     pub fn memories_mut(&mut self) -> &mut [Memory] {
