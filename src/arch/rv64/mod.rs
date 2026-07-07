@@ -6,11 +6,30 @@
 //! *Timer* —  (TODO) RISC-V timer (mtime/mtimecmp).
 //! *Context* — (TODO) context-switch assembly (`__switch`).
 
+macro_rules! riscv_privileged_isa_version {
+    () => {
+        "v20260120"
+    };
+}
+
+macro_rules! riscv_supervisor_doc_url {
+    ($fragment:literal) => {
+        concat!(
+            "https://docs.riscv.org/reference/isa/",
+            riscv_privileged_isa_version!(),
+            "/priv/supervisor.html",
+            $fragment,
+        )
+    };
+}
+
 pub use paging::init_page_table;
 
 pub mod asm;
 pub mod consts;
 mod paging;
+pub mod regs;
+pub mod trap;
 
 use core::arch::global_asm;
 
@@ -45,10 +64,10 @@ global_asm!(include_str!("boot.s"));
 /// The only reliable debug tool available here is `panic!()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _start_rust(hart_id: usize, dtb_ptr: *const u8) -> ! {
-    unsafe { paging::enable_mmu_and_jump(after_mmu as *const () as usize, hart_id, dtb_ptr) }
+    unsafe { paging::enable_mmu_and_jump(_after_mmu as *const () as usize, hart_id, dtb_ptr) }
 }
 
-unsafe extern "C" fn after_mmu(hart_id: usize, dtb_ptr: Pa) -> ! {
+unsafe extern "C" fn _after_mmu(hart_id: usize, dtb_ptr: Pa) -> ! {
     unsafe {
         let boot_info = BootInfo {
             boot_cpu_id: hart_id,

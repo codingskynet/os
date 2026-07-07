@@ -2,16 +2,19 @@
 //!
 //! Sv39 virtual address, 64-bit register value:
 //!
+//! ```text
 //!   63            39 38            30 29            21 20            12 11     0
 //!  +----------------+----------------+----------------+----------------+--------+
 //!  | sign extension |     VPN[2]     |     VPN[1]     |     VPN[0]     | offset |
 //!  +----------------+----------------+----------------+----------------+--------+
 //!       25 bits            9 bits           9 bits           9 bits      12 bits
+//! ```
 //!
 //!   Canonical rule: bits 63..39 must all equal bit 38.
 //!
 //! Page-table walk:
 //!
+//! ```text
 //!   satp.PPN
 //!      |
 //!      v
@@ -30,14 +33,17 @@
 //!      |-- leaf PTE: maps 4KiB if R/W/X != 0
 //!      v
 //!   physical page number + page offset
+//! ```
 //!
 //! Sv39 page-table entry, 64-bit value:
 //!
+//! ```text
 //!   63      54 53          28 27          19 18          10 9   8 7 6 5 4 3 2 1 0
 //!  +----------+--------------+--------------+--------------+-----+-+-+-+-+-+-+-+-+
 //!  | reserved |    PPN[2]    |    PPN[1]    |    PPN[0]    | RSW |D|A|G|U|X|W|R|V|
 //!  +----------+--------------+--------------+--------------+-----+-+-+-+-+-+-+-+-+
 //!     10 bits      26 bits        9 bits         9 bits     2 bits
+//! ```
 //!
 //!   Bits 0..7 are the hardware-defined flags represented by `PteFlags`.
 //!   Bits 8..9 are reserved for supervisor software and are currently unused.
@@ -114,18 +120,25 @@ bitflags! {
     pub struct PteFlags: usize {
         /// valid. If clear, the PTE is invalid and other bits are ignored.
         const V = 1 << 0;
+
         /// readable leaf mapping.
         const R = 1 << 1;
+
         /// writable leaf mapping. The spec reserves W=1,R=0 as invalid.
         const W = 1 << 2;
+
         /// executable leaf mapping.
         const X = 1 << 3;
+
         /// user-accessible when set; supervisor-only when clear.
         const U = 1 << 4;
+
         /// global mapping, shared across address spaces.
         const G = 1 << 5;
+
         /// accessed. Set by hardware, or pre-set by the kernel.
         const A = 1 << 6;
+
         /// dirty. Set by hardware on writes, or pre-set by the kernel.
         const D = 1 << 7;
     }

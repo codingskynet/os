@@ -1,3 +1,4 @@
+use core::arch::asm;
 use core::fmt;
 
 use crate::arch::consts::PAGE_SIZE;
@@ -7,8 +8,44 @@ use crate::mm::buddy::BuddyAllocator;
 use crate::mm::page_meta::{Buddy, OwnedPageMeta, PageMeta, PageMetaSection, PageMetaState};
 use crate::printlnk;
 
-#[cfg(feature = "fuzz-allocator")]
+#[cfg(feature = "smoke-allocator")]
 pub mod fuzz;
+
+#[cfg(feature = "smoke-page-fault")]
+pub const PAGE_FAULT_SMOKE_ADDR: usize = 0x3939_3939;
+
+pub fn smoke() {
+    #[cfg(feature = "smoke-allocator")]
+    {
+        use crate::debug::dump_page_list;
+        use crate::mm::BUDDY;
+
+        dump_page_list();
+        printlnk!("{:#?}", *BUDDY.lock());
+        crate::debug::fuzz::allocator::run();
+        dump_page_list();
+        printlnk!("{:#?}", *BUDDY.lock());
+    }
+    #[cfg(feature = "smoke-page-fault")]
+    {
+        use crate::debug;
+
+        debug!("page fault smoke: start");
+
+        unsafe {
+            // `ld` is a fixed-width 4-byte instruction. The page-fault handler
+            // advances `sepc` by 4 under this feature, so execution resumes at the
+            // next instruction after the intentional fault.
+            asm!(
+                "ld zero, 0({addr})",
+                addr = in(reg) PAGE_FAULT_SMOKE_ADDR,
+                options(nostack, readonly),
+            );
+        }
+
+        debug!("page fault smoke: recovered");
+    }
+}
 
 pub fn dump_page_list() {
     let sections = PAGE_META_MAP.sections();

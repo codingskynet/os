@@ -40,7 +40,7 @@ RUSTFLAGS := \
 	-C link-arg=--no-relax \
 	-C link-arg=--orphan-handling=error
 
-.PHONY: all setup build image run clean fmt clippy typos test check
+.PHONY: all setup build image run clean fmt clippy typos test doc-check doc-kernel check
 
 all: build image
 
@@ -80,4 +80,11 @@ typos:
 test:
 	cargo test --lib $(FEATURE_FLAGS) --target=$(HOST_ARCH)
 
-check: fmt clippy typos test
+doc-check:
+	cargo test --doc $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo doc --no-deps --bin kernel $(FEATURE_FLAGS) --target=$(ARCH)
+
+doc-kernel:
+	cargo doc --open --bin kernel --no-deps $(FEATURE_FLAGS) --target=$(ARCH)
+
+check: fmt clippy typos test doc-check
