@@ -1,6 +1,6 @@
 ARCH         		?= riscv64gc-unknown-none-elf
 HOST_ARCH			?= $(shell rustc -vV | awk '/^host:/ { print $$2 }')
-LINKER_SCRIPT		:= src/arch/rv64/kernel.ld
+LINKER_SCRIPT		:= boot/src/arch/rv64/kernel.ld
 
 DEBUG				?= 0
 FEATURES			?=
@@ -27,9 +27,10 @@ endif
 
 TARGET_DIR := target/$(ARCH)/$(PROFILE)
 KERNEL_ARTIFACT := $(TARGET_DIR)/kernel
-KERNEL_ELF := $(KERNEL_BASENAME).elf
-KERNEL_DEBUG := $(KERNEL_BASENAME).debug
-KERNEL_BIN := $(KERNEL_BASENAME).bin
+ARTIFACTS_DIR := artifacts
+KERNEL_ELF := $(ARTIFACTS_DIR)/$(KERNEL_BASENAME).elf
+KERNEL_DEBUG := $(ARTIFACTS_DIR)/$(KERNEL_BASENAME).debug
+KERNEL_BIN := $(ARTIFACTS_DIR)/$(KERNEL_BASENAME).bin
 
 MEMORY     := 64M
 
@@ -49,9 +50,12 @@ setup:
 	@scripts/setup.sh
 
 build:
-	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
+	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc -p boot --bin kernel --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
 
-image: build
+$(ARTIFACTS_DIR):
+	mkdir -p $@
+
+image: build | $(ARTIFACTS_DIR)
 	cp $(KERNEL_ARTIFACT) $(KERNEL_ELF)
 	rust-objcopy --only-keep-debug $(KERNEL_ARTIFACT) $(KERNEL_DEBUG)
 	rust-objcopy $(OBJCOPY_FLAGS) -O binary $(KERNEL_ARTIFACT) $(KERNEL_BIN)
@@ -65,26 +69,26 @@ run: image
 		-kernel $(KERNEL_BIN)
 
 clean:
-	rm -f kernel.bin kernel-debug.bin kernel.elf kernel-debug.elf kernel.debug kernel-debug.debug
+	rm -rf $(ARTIFACTS_DIR)
 	cargo clean
 
 fmt:
 	./fmt
 
 clippy:
-	cargo clippy --target=$(ARCH) $(FEATURE_FLAGS)
+	cargo clippy -p boot --bin kernel --target=$(ARCH) $(FEATURE_FLAGS)
 
 typos:
 	typos
 
 test:
-	cargo test --lib $(FEATURE_FLAGS) --target=$(HOST_ARCH)
+	cargo test -p runtime-test --lib --target=$(HOST_ARCH)
 
 doc-check:
-	cargo test --doc $(FEATURE_FLAGS) --target=$(ARCH)
-	cargo doc --no-deps --bin kernel $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo test --doc -p runtime $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo doc --no-deps -p boot --bin kernel $(FEATURE_FLAGS) --target=$(ARCH)
 
 doc-kernel:
-	cargo doc --open --bin kernel --no-deps $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo doc --open -p boot --bin kernel --no-deps $(FEATURE_FLAGS) --target=$(ARCH)
 
 check: fmt clippy typos test doc-check

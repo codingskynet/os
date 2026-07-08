@@ -15,6 +15,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
+name = "boot"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "runtime",
+ "thiserror",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -70,20 +79,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "os"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "bitflags",
- "crossbeam-utils",
- "derive_more",
- "either",
- "extend",
- "thiserror",
- "winnow",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -99,6 +94,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "bitflags",
+ "crossbeam-utils",
+ "derive_more",
+ "either",
+ "extend",
+ "thiserror",
+ "winnow",
+]
+
+[[package]]
+name = "runtime-test"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "winnow",
 ]
 
 [[package]]

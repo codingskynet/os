@@ -1,5 +1,4 @@
 [default.extend-words]
-
 # UART register names
 "THR" = "THR"
 "THRE" = "THRE"
@@ -10,6 +9,9 @@
 # RISC-V status register bit names
 "SIE" = "SIE"
 "sie" = "sie"
+
+# DWARF debug section names
+"aranges" = "aranges"
 
 [files]
 extend-exclude = [
