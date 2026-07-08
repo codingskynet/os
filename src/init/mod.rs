@@ -1,7 +1,4 @@
-use alloc::boxed::Box;
-
-use crate::arch::switch::_switch_to;
-use crate::kernel::thread::{self, Thread, ThreadState};
+use crate::kernel::thread;
 use crate::printlnk;
 
 pub fn kernel_init() -> ! {
@@ -18,13 +15,5 @@ pub fn kernel_init() -> ! {
         }
     });
 
-    let mut idle = Thread::new(|| {
-        loop {
-            core::hint::spin_loop();
-            thread::yield_now();
-        }
-    });
-
-    idle.state = ThreadState::Running;
-    unsafe { _switch_to(Box::into_raw(idle).as_ref().unwrap().regs()) }
+    thread::jump_to_idle();
 }

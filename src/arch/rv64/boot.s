@@ -116,6 +116,10 @@
 #   bit 2 IR = instret
 .equ MCOUNTEREN_TM,         (1 << 1)
 
+# menvcfg controls optional supervisor-mode facilities.
+#   bit 63 STCE = S-mode may use stimecmp for supervisor timer interrupts.
+.equ MENVCFG_STCE,          (1 << 63)
+
 # mstatus.MPP is bits 12:11. mret enters the privilege mode stored there:
 #   00 = U-mode, 01 = S-mode, 11 = M-mode.
 .equ MSTATUS_MPP_MASK,      (3 << 11)
@@ -199,6 +203,10 @@ enter_supervisor_mode:
     # from supervisor mode traps as an illegal instruction on compliant harts.
     li   t0, MCOUNTEREN_TM
     csrs mcounteren, t0
+
+    # Allow S-mode to program stimecmp when Sstc is available.
+    li   t0, MENVCFG_STCE
+    csrs 0x30a, t0
 
     # mret returns to the privilege encoded in mstatus.MPP.  Clear MPP, then
     # set it to 01 (supervisor mode).

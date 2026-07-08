@@ -1,6 +1,3 @@
-use crate::arch::switch::_kernel_thread_trampoline;
-use crate::mm::addr::Va;
-
 macro_rules! regs {
     (
         $(#[$meta:meta])*
@@ -26,10 +23,9 @@ regs! {
     }
 }
 
-impl GeneralRegs {
-    pub fn as_kernel_thread_trampoline(&mut self, sp: Va, entry: Va) {
-        self.ra = _kernel_thread_trampoline as *const () as usize;
-        self.sp = sp.as_raw();
-        self.a0 = entry.as_raw();
+regs! {
+    #[derive(Default)]
+    pub struct CalleeSavedRegs {
+        s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
     }
 }
