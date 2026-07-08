@@ -174,7 +174,7 @@ pub impl &mut [PageMeta] {
             }
         }
         let (page_meta, reserved) = self.split_first_mut().unwrap();
-        assert!(page_meta.addr().aligned_order(PAGE_SIZE) >= order);
+        debug_assert!(page_meta.addr().aligned_order(PAGE_SIZE) >= order);
 
         for page_meta in reserved.iter_mut() {
             **page_meta = PageMetaState::BuddyReserved;
