@@ -61,6 +61,7 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
 
         token.forget();
         crate::arch::trap::init();
+        crate::arch::timer::init();
         kernel_init();
     }
 }

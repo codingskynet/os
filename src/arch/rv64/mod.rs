@@ -27,9 +27,11 @@ pub use paging::init_page_table;
 
 pub mod asm;
 pub mod consts;
+pub mod page_fault;
 mod paging;
 pub mod regs;
 pub mod switch;
+pub mod timer;
 pub mod trap;
 
 use core::arch::global_asm;

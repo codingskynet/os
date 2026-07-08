@@ -4,8 +4,8 @@ use core::num::NonZeroUsize;
 use core::ptr;
 
 use crate::arch;
-use crate::arch::switch::_switch;
-use crate::kernel::scheduler::{self, SCHEDULER};
+use crate::arch::switch::{_switch, _switch_to, SwitchContext};
+use crate::kernel::scheduler::SCHEDULER;
 use crate::mm::addr::Va;
 use crate::util::consts::K;
 
@@ -16,11 +16,27 @@ pub fn spawn(entry: impl FnOnce() + Send + 'static) {
 }
 
 pub fn yield_now() {
-    scheduler::yield_now();
+    SCHEDULER.run_next();
 }
 
-pub fn exit_current() -> ! {
-    scheduler::exit_current()
+pub fn jump_to_idle() -> ! {
+    let mut idle = Thread::new(|| {
+        loop {
+            core::hint::spin_loop();
+            yield_now();
+        }
+    });
+
+    idle.state = ThreadState::Running;
+    unsafe { _switch_to(Box::into_raw(idle).as_ref().unwrap().context()) }
+}
+
+fn exit_current() -> ! {
+    Thread::with_current(|current| {
+        current.state = ThreadState::Exited;
+    });
+    SCHEDULER.run_next();
+    unreachable!("exited thread resumed after scheduler switch")
 }
 
 #[allow(unused)]
@@ -34,8 +50,8 @@ pub enum ThreadState {
 
 #[repr(C, align(16384))]
 pub struct Thread {
-    pub state: ThreadState,
-    regs: arch::regs::GeneralRegs,
+    state: ThreadState,
+    context: SwitchContext,
     entry: Option<Box<dyn FnOnce() + Send>>,
     stack_bottom: (),
 }
@@ -46,20 +62,20 @@ impl Thread {
 
         let mut thread = Box::new(Self {
             state: ThreadState::Ready,
-            regs: arch::regs::GeneralRegs::default(),
+            context: SwitchContext::default(),
             entry: Some(Box::new(entry)),
             stack_bottom: (),
         });
         let stack_top = thread.stack_top();
         let thread_ptr = Va::from(&*thread);
         thread
-            .regs
+            .context
             .as_kernel_thread_trampoline(stack_top, thread_ptr);
         thread
     }
 
-    pub fn regs(&self) -> &arch::regs::GeneralRegs {
-        &self.regs
+    pub fn context(&self) -> &arch::switch::SwitchContext {
+        &self.context
     }
 
     pub fn stack_top(&self) -> Va {
@@ -79,13 +95,13 @@ impl Thread {
 
                 // SAFETY: `current` is the currently running thread recovered
                 // from the active stack, and `thread` was just removed from the
-                // scheduler queue, so both `regs` fields are live and stable
+                // scheduler queue, so both switch contexts are live and stable
                 // across the context switch. `thread` is intentionally
                 // `ManuallyDrop`: ownership of the selected thread allocation
                 // stays parked in this suspended stack frame until this call
                 // returns on a later switch back to `current`.
                 unsafe {
-                    _switch(&mut current.regs, &thread.regs, current);
+                    _switch(&mut current.context, &thread.context, current);
                 }
             }
         });

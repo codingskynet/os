@@ -26,7 +26,8 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
-debug = "line-tables-only"
+debug = true
+lto = true
 
 [dependencies]
 arrayvec = { version = "0.7.7", default-features = false }

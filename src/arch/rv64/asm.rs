@@ -3,7 +3,7 @@ use core::arch::asm;
 pub mod interrupt {
     use super::*;
 
-    const SSTATUS_SIE: usize = 1 << 1;
+    pub const SSTATUS_SIE: usize = 1 << 1;
 
     pub fn is_enabled() -> bool {
         let sstatus: usize;
@@ -32,6 +32,17 @@ pub mod interrupt {
             asm!(
                 "csrc sstatus, {sie}",
                 sie = in(reg) SSTATUS_SIE,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+
+    const SIE_STIE: usize = 1 << 5;
+    pub fn allow_timer() {
+        unsafe {
+            asm!(
+                "csrs sie, {stie}",
+                stie = in(reg) SIE_STIE,
                 options(nomem, nostack, preserves_flags),
             );
         }
@@ -67,5 +78,19 @@ pub mod time {
             );
         }
         ticks
+    }
+}
+
+pub mod timer {
+    use super::*;
+
+    pub fn set_deadline(deadline: u64) {
+        unsafe {
+            asm!(
+                "csrw stimecmp, {deadline}",
+                deadline = in(reg) deadline,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
     }
 }

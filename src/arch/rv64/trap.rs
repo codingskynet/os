@@ -38,6 +38,8 @@ use core::mem::{offset_of, size_of};
 use bitflags::bitflags;
 
 use super::regs::GeneralRegs;
+use crate::arch::page_fault::handle_page_fault;
+use crate::arch::timer::handle_timer;
 use crate::mm::addr::Va;
 
 pub fn init() {
@@ -165,41 +167,12 @@ extern "C" fn _trap_handler(frame: &mut TrapFrame) {
             "unhandled exception: {:?}, sepc={}, stval={:#x}",
             exception, frame.sepc, frame.stval
         ),
+        TrapCause::Interrupt(Interrupt::SupervisorTimer) => handle_timer(),
         TrapCause::Interrupt(interrupt) => panic!(
             "unhandled interrupt: {:?}, sepc={}, stval={:#x}",
             interrupt, frame.sepc, frame.stval
         ),
     }
-}
-
-fn handle_page_fault(frame: &mut TrapFrame, exception: Exception) {
-    let fault_addr = match exception {
-        Exception::InstructionPageFault(addr)
-        | Exception::LoadPageFault(addr)
-        | Exception::StorePageFault(addr) => addr,
-        _ => unreachable!("handle_page_fault called with non-page-fault exception"),
-    };
-
-    crate::debug!(
-        "page fault: {:?}, sepc={}, fault_addr={}, sstatus={:?}",
-        exception,
-        frame.sepc,
-        fault_addr,
-        frame.sstatus,
-    );
-
-    #[cfg(feature = "smoke-page-fault")]
-    {
-        if fault_addr == crate::debug::PAGE_FAULT_SMOKE_ADDR {
-            frame.sepc = frame.sepc.checked_offset(4).unwrap();
-            return;
-        }
-    }
-
-    panic!(
-        "unhandled page fault: {:?}, sepc={}, fault_addr={}",
-        exception, frame.sepc, fault_addr
-    );
 }
 
 bitflags! {
