@@ -1,23 +1,23 @@
 use core::panic::PanicInfo;
 
-use crate::printlnk;
+use crate::println;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    printlnk!("kernel panic");
+    println!("kernel panic");
 
     if let Some(location) = info.location() {
-        printlnk!(
+        println!(
             "  at {}:{}:{}",
             location.file(),
             location.line(),
             location.column()
         );
     } else {
-        printlnk!("  at <unknown>");
+        println!("  at <unknown>");
     }
 
-    printlnk!("  message: {}", info.message());
+    println!("  message: {}", info.message());
 
     #[allow(clippy::empty_loop)]
     loop {

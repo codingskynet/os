@@ -2,9 +2,10 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem;
 use core::ops::Deref;
-use core::sync::atomic::{self, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
-static TOKEN_ALIVE: AtomicBool = AtomicBool::new(true);
+static TOKEN_OWNED: AtomicBool = AtomicBool::new(false);
+static SHARED: AtomicBool = AtomicBool::new(false);
 
 pub struct FreezableToken {
     // prevent Clone, Copy, Send, and Sync
@@ -13,8 +14,8 @@ pub struct FreezableToken {
 
 impl FreezableToken {
     pub fn take() -> Option<Self> {
-        if TOKEN_ALIVE
-            .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+        if TOKEN_OWNED
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
             Some(Self {
@@ -26,12 +27,17 @@ impl FreezableToken {
     }
 
     pub fn write<T, U>(&mut self, value: &Freezable<T>, write_fn: impl Fn(&mut T) -> U) -> U {
+        assert!(!value.shared.load(Ordering::Relaxed));
         let value = unsafe { &mut *value.value.get() };
         write_fn(value)
     }
 
+    pub fn mark_shared<T>(&mut self, value: &Freezable<T>) {
+        value.shared.store(true, Ordering::Release);
+    }
+
     pub fn forget(self) {
-        atomic::fence(Ordering::Release);
+        SHARED.store(true, Ordering::Release);
         mem::forget(self);
     }
 }
@@ -43,6 +49,7 @@ impl Drop for FreezableToken {
 }
 
 pub struct Freezable<T> {
+    shared: AtomicBool,
     value: UnsafeCell<T>,
 }
 
@@ -56,7 +63,7 @@ impl<T> Deref for Freezable<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        debug_assert!(!TOKEN_ALIVE.load(Ordering::Relaxed));
+        assert!(SHARED.load(Ordering::Acquire) || self.shared.load(Ordering::Acquire));
         unsafe { &*self.value.get() }
     }
 }
@@ -64,6 +71,7 @@ impl<T> Deref for Freezable<T> {
 impl<T> Freezable<T> {
     pub const fn new(value: T) -> Self {
         Self {
+            shared: AtomicBool::new(false),
             value: UnsafeCell::new(value),
         }
     }

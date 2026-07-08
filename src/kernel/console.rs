@@ -10,15 +10,28 @@ use crate::kernel::sync::SpinLock;
 use crate::mm::addr::Pa;
 
 #[macro_export]
+macro_rules! println {
+    () => ({
+        $crate::kernel::console::print(format_args!("\n"));
+    });
+    ($($arg:tt)*) => ({
+        $crate::kernel::console::print(format_args!(
+            "{}\n",
+            format_args!($($arg)*),
+        ));
+    })
+}
+
+#[macro_export]
 macro_rules! printk {
-    ($($arg:tt)*) => ($crate::kernel::console::_print(format_args!($($arg)*)));
+    ($($arg:tt)*) => ($crate::kernel::console::print(format_args!($($arg)*)));
 }
 
 #[macro_export]
 macro_rules! printlnk {
     () => ({
         let us = $crate::kernel::clock::clock_micros();
-        $crate::kernel::console::_print(format_args!(
+        $crate::kernel::console::print(format_args!(
             "[{:>5}.{:06}]\n",
             us / $crate::util::consts::MICROS_PER_SEC,
             us % $crate::util::consts::MICROS_PER_SEC,
@@ -26,7 +39,7 @@ macro_rules! printlnk {
     });
     ($($arg:tt)*) => ({
         let us = $crate::kernel::clock::clock_micros();
-        $crate::kernel::console::_print(format_args!(
+        $crate::kernel::console::print(format_args!(
             "[{:>5}.{:06}] {}\n",
             us / $crate::util::consts::MICROS_PER_SEC,
             us % $crate::util::consts::MICROS_PER_SEC,
@@ -49,7 +62,7 @@ macro_rules! debug {
     })
 }
 
-pub fn _print(args: fmt::Arguments) {
+pub fn print(args: fmt::Arguments) {
     CONSOLE.lock().write_fmt(args).unwrap();
 }
 

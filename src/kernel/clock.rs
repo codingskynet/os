@@ -54,6 +54,7 @@ impl ClockMeta {
             meta.base = base;
             meta.freq = freq;
         });
+        token.mark_shared(&CLOCK_META);
 
         Ok(())
     }

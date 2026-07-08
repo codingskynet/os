@@ -37,15 +37,15 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
     match &boot_info.boot_data {
         BootData::DeviceTree(fdt) => {
             ClockMeta::init(&mut token, fdt).expect("failed to initialize clock");
+
             let model = fdt
                 .query()
                 .prop("model")
                 .and_then(prop::Value::into_str)
                 .unwrap_or("(unknown)");
-            printlnk!("dtb: FDT detected, model = \"{}\"", model);
-            if let Err(e) = console::install_from_fdt(fdt) {
-                printlnk!("dtb: failed to install console: {:?}", e);
-            }
+            printlnk!("dtb: FDT detected, model = \"{model}\"");
+
+            console::install_from_fdt(fdt).expect("failed to install console");
 
             let mut allocator =
                 BumpAllocator::new(fdt).expect("failed to initialize BumpAllocator");
