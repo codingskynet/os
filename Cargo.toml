@@ -2,6 +2,7 @@
 members = [
     "boot",
     "runtime",
+    "runtime-test",
 ]
 resolver = "3"
 

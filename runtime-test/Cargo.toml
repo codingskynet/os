@@ -1,0 +1,8 @@
+[package]
+name = "runtime-test"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+arrayvec.workspace = true
+winnow.workspace = true

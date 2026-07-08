@@ -1,5 +1,3 @@
-#![allow(clippy::identity_op)]
-#![allow(clippy::forget_non_drop)]
 #![no_main]
 #![no_std]
 

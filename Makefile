@@ -82,7 +82,7 @@ typos:
 	typos
 
 test:
-	cargo test -p runtime --lib --target=$(HOST_ARCH)
+	cargo test -p runtime-test --lib --target=$(HOST_ARCH)
 
 doc-check:
 	cargo test --doc -p runtime $(FEATURE_FLAGS) --target=$(ARCH)

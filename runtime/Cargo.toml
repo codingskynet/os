@@ -3,6 +3,9 @@ name = "runtime"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+test = false
+
 [features]
 smoke = ["smoke-allocator", "smoke-page-fault", "smoke-kernel-thread"]
 smoke-allocator = []
