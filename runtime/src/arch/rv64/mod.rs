@@ -23,12 +23,10 @@ macro_rules! riscv_supervisor_doc_url {
     };
 }
 
-pub use paging::{enable_mmu_and_jump, init_page_table};
-
 pub mod asm;
 pub mod consts;
 pub mod page_fault;
-mod paging;
+pub mod page_table;
 pub mod regs;
 pub mod switch;
 pub mod timer;

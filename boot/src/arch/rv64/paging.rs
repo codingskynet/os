@@ -1,22 +1,19 @@
-mod page_table;
-
 use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::num::NonZeroUsize;
 use core::ops::DerefMut;
 use core::ptr;
 
-use page_table::{PageTable, PteFlags, SATP_MODE_SV39, ppn, vpn0, vpn1, vpn2};
-
-use super::consts::*;
-use crate::arch::region;
-use crate::dev::dt::Fdt;
-use crate::dev::dt::memory::MemoryIter;
-use crate::dev::uart::ns16550::NS16550;
-use crate::kernel::console::{CONSOLE, Console};
-use crate::mm::addr::{Pa, Va};
-use crate::mm::region::Region;
-use crate::util::consts::G;
+use runtime::arch::consts::*;
+use runtime::arch::page_table::{PageTable, PteFlags, SATP_MODE_SV39, ppn, vpn0, vpn1, vpn2};
+use runtime::arch::region;
+use runtime::dev::dt::Fdt;
+use runtime::dev::dt::memory::MemoryIter;
+use runtime::dev::uart::ns16550::NS16550;
+use runtime::kernel::console::{CONSOLE, Console};
+use runtime::mm::addr::{Pa, Va};
+use runtime::mm::region::Region;
+use runtime::util::consts::*;
 
 /// Enable the temporary bootstrap address space and jump to `entry`.
 ///
@@ -27,7 +24,7 @@ use crate::util::consts::G;
 /// the temporary page tables are being built, and this function must run only
 /// on the boot hart before normal runtime initialization.
 pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const u8) -> ! {
-    const L2_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(G).unwrap();
+    const L2_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(1 * G).unwrap();
     const L1_PAGE_SIZE: NonZeroUsize = HUGE_PAGE_SIZE;
 
     // Temporary Sv39 root page table using 1GiB leaf mapping for whole memory

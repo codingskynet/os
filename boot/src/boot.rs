@@ -8,6 +8,7 @@ use runtime::mm::page_meta::{PageMeta, PageMetaSection};
 use runtime::mm::{BUDDY, PAGE_META_MAP};
 use runtime::printlnk;
 
+use crate::arch;
 use crate::bump::{Alloc, BumpAllocator};
 use crate::init::kernel_init;
 
@@ -48,7 +49,7 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
 
             let mut allocator =
                 BumpAllocator::new(fdt).expect("failed to initialize BumpAllocator");
-            runtime::arch::init_page_table(fdt, || {
+            arch::paging::init_page_table(fdt, || {
                 allocator
                     .alloc_uninit()
                     .expect("failed to allocate PageTable")

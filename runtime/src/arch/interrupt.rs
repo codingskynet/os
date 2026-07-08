@@ -11,11 +11,16 @@ pub struct InterruptGuard {
     _marker: PhantomData<*mut ()>,
 }
 
+impl Default for InterruptGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // SAFETY: sharing references to the guard is harmless; only ownership/drop
 // matters, and the marker keeps the guard `!Send`.
 unsafe impl Sync for InterruptGuard {}
 
-#[allow(clippy::new_without_default)]
 impl InterruptGuard {
     pub fn new() -> Self {
         let was_enabled = arch::asm::interrupt::is_enabled();
