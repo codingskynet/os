@@ -201,43 +201,41 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
         mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>,
         root: &mut PageTable,
     ) {
-        assert_eq!(region::kernel().start.into_kernel_va(), KERNEL_VMA_BASE);
-        assert_eq!(
-            region::init().start.align_down(PAGE_SIZE),
-            region::init().start
-        );
-        assert_eq!(region::init().end.align_down(PAGE_SIZE), region::init().end);
-        assert_eq!(region::rx().start.align_down(PAGE_SIZE), region::rx().start);
-        assert_eq!(region::rx().end.align_down(PAGE_SIZE), region::rx().end);
-        assert_eq!(region::r().start.align_down(PAGE_SIZE), region::r().start);
-        assert_eq!(region::r().end.align_down(PAGE_SIZE), region::r().end);
-        assert_eq!(region::rw().start.align_down(PAGE_SIZE), region::rw().start);
-        assert_eq!(region::rw().end.align_down(PAGE_SIZE), region::rw().end);
+        let kernel = region::kernel();
+        assert_eq!(kernel.start.into_kernel_va(), KERNEL_VMA_BASE);
+
+        let init = region::init();
+        let rx = region::rx();
+        let r = region::r();
+        let rw = region::rw();
+
+        assert_eq!(init.start.align_down(PAGE_SIZE), init.start);
+        assert_eq!(init.end.align_down(PAGE_SIZE), init.end);
+        assert_eq!(rx.start.align_down(PAGE_SIZE), rx.start);
+        assert_eq!(rx.end.align_down(PAGE_SIZE), rx.end);
+        assert_eq!(r.start.align_down(PAGE_SIZE), r.start);
+        assert_eq!(r.end.align_down(PAGE_SIZE), r.end);
+        assert_eq!(rw.start.align_down(PAGE_SIZE), rw.start);
+        assert_eq!(rw.end.align_down(PAGE_SIZE), rw.end);
 
         map_region(
             root,
-            region::init(),
+            init,
             &mut alloc,
             Pa::into_kernel_va,
             PteFlags::R | PteFlags::W | PteFlags::X,
         );
         map_region(
             root,
-            region::rx(),
+            rx,
             &mut alloc,
             Pa::into_kernel_va,
             PteFlags::R | PteFlags::X,
         );
+        map_region(root, r, &mut alloc, Pa::into_kernel_va, PteFlags::R);
         map_region(
             root,
-            region::r(),
-            &mut alloc,
-            Pa::into_kernel_va,
-            PteFlags::R,
-        );
-        map_region(
-            root,
-            region::rw(),
+            rw,
             &mut alloc,
             Pa::into_kernel_va,
             PteFlags::R | PteFlags::W,
