@@ -14,7 +14,7 @@
 //! | Uninit |
 //! +--------+
 //!   |  |
-//!   |  +-- owned_uninit().consume_as_reserved() --> +----------+
+//!   |  +-- owned_uninit().consume_as_reserved() ---> +----------+
 //!   |                                                | Reserved |
 //!   |                                                +----------+
 //!   |                                                     |
