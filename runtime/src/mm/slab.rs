@@ -1,3 +1,9 @@
+//! Fixed-size slab allocator used by the global allocator.
+//!
+//! Each allocator instance serves one power-of-two size class. Slab blocks are
+//! borrowed from the buddy allocator and returned once all objects in the block
+//! have been freed.
+
 use core::alloc::Layout;
 use core::num::NonZeroUsize;
 use core::ops::DerefMut;
@@ -9,6 +15,10 @@ use crate::mm::page_meta::SharedPageMeta;
 use crate::mm::{BUDDY, page_meta_at};
 use crate::util::linked_list::Pointer;
 
+/// Allocator for one small-object size class.
+///
+/// The free list is stored inside freed objects. The allocator's block list
+/// contains only blocks that currently have at least one free object.
 pub struct SlabAllocator {
     slab_size: NonZeroUsize,
     block_size: NonZeroUsize,

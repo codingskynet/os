@@ -1,7 +1,13 @@
+//! Half-open physical address ranges.
+
 use core::num::NonZeroUsize;
 
 use crate::mm::addr::{Pa, Va};
 
+/// Half-open physical range `[start, end)`.
+///
+/// Empty regions are allowed when `start == end`; constructors reject inverted
+/// ranges where `start > end`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Region {
     pub start: Pa,

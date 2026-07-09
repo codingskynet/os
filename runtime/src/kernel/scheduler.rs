@@ -1,3 +1,5 @@
+//! Run queue for kernel threads.
+
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use core::mem::ManuallyDrop;
@@ -8,6 +10,7 @@ use crate::kernel::thread::Thread;
 
 pub static SCHEDULER: Scheduler = Scheduler::empty();
 
+/// FIFO scheduler for runnable kernel threads.
 pub struct Scheduler {
     threads: SpinLock<VecDeque<ManuallyDrop<Box<Thread>>>>,
 }

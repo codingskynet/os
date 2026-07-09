@@ -1,3 +1,9 @@
+//! Boot-time mutable values that become shared after initialization.
+//!
+//! A single [`FreezableToken`] permits mutation while boot code is building
+//! global state. Once the token is forgotten, `Freezable<T>` values can only be
+//! read through shared references.
+
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem;
@@ -7,6 +13,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 static TOKEN_OWNED: AtomicBool = AtomicBool::new(false);
 static SHARED: AtomicBool = AtomicBool::new(false);
 
+/// Unique token that authorizes writes to [`Freezable`] values during boot.
 pub struct FreezableToken {
     // prevent Clone, Copy, Send, and Sync
     _marker: PhantomData<*mut ()>,
@@ -48,15 +55,16 @@ impl Drop for FreezableToken {
     }
 }
 
+/// Value that is mutable during boot and read-only after sharing begins.
 pub struct Freezable<T> {
     shared: AtomicBool,
     value: UnsafeCell<T>,
 }
 
-/// SAFETY: after a `Freezable<T>` is shared, mutation through its `UnsafeCell`
-/// is allowed only while holding the unique `FreezableToken`; callers of
-/// `FreezableToken::take` must ensure that no such token exists during the
-/// frozen shared phase. Shared access exposes `&T`, so `T` must be `Sync`.
+// SAFETY: after a `Freezable<T>` is shared, mutation through its `UnsafeCell`
+// is allowed only while holding the unique `FreezableToken`; callers of
+// `FreezableToken::take` must ensure that no such token exists during the
+// frozen shared phase. Shared access exposes `&T`, so `T` must be `Sync`.
 unsafe impl<T: Sync> Sync for Freezable<T> {}
 
 impl<T> Deref for Freezable<T> {

@@ -1,8 +1,11 @@
+//! Page metadata for reserved pages.
+
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use super::*;
 
+/// Marker type for pages reserved during boot.
 pub enum Reserved {}
 
 impl OwnedPageMeta<Reserved> {

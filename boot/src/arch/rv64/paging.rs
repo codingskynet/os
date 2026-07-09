@@ -1,3 +1,9 @@
+//! RISC-V boot-time page-table setup.
+//!
+//! Boot first installs a temporary address space so execution can jump from the
+//! low physical entry point to the high kernel virtual address. It later builds
+//! the final runtime page table from firmware memory information.
+
 use core::arch::asm;
 use core::mem::MaybeUninit;
 use core::num::NonZeroUsize;

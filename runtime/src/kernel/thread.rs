@@ -1,3 +1,5 @@
+//! Cooperative kernel threads and context-switch handoff.
+
 use alloc::boxed::Box;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
@@ -36,6 +38,7 @@ fn exit_current() -> ! {
     unreachable!("exited thread resumed after scheduler switch")
 }
 
+/// Scheduler-visible lifecycle state for a kernel thread.
 #[allow(unused)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThreadState {
@@ -45,6 +48,11 @@ pub enum ThreadState {
     Exited,
 }
 
+/// Kernel thread allocation and stack.
+///
+/// The thread object is exactly one stack-sized, stack-aligned allocation. The
+/// bottom of the allocation stores the thread metadata and the rest is used as
+/// that thread's kernel stack.
 #[repr(C, align(16384))]
 pub struct Thread {
     state: ThreadState,

@@ -1,3 +1,8 @@
+//! Typed physical and virtual addresses.
+//!
+//! The wrappers make address-space conversions explicit while preserving the
+//! simple integer operations needed by low-level paging and allocator code.
+
 use core::fmt;
 use core::num::NonZeroUsize;
 
@@ -31,6 +36,10 @@ fn fmt_addr(f: &mut fmt::Formatter<'_>, addr: usize) -> fmt::Result {
     )
 }
 
+/// Physical address.
+///
+/// `Pa` values are plain physical addresses. Converting to a virtual address
+/// uses the runtime's direct map or the kernel image offset.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Debug)]
 #[debug("Pa({})", self)]
@@ -80,6 +89,10 @@ impl fmt::Display for Pa {
     }
 }
 
+/// Virtual address in the kernel's Sv39 address layout.
+///
+/// `Va::into_pa` currently recognizes direct-map and kernel-image addresses;
+/// user-space and other upper-canonical ranges are not implemented.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Debug)]
 #[debug("Va({})", self)]

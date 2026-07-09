@@ -10,7 +10,7 @@
 //!       25 bits            9 bits           9 bits           9 bits      12 bits
 //! ```
 //!
-//!   Canonical rule: bits 63..39 must all equal bit 38.
+//! Canonical rule: bits 63..39 must all equal bit 38.
 //!
 //! Page-table walk:
 //!
@@ -45,49 +45,49 @@
 //!     10 bits      26 bits        9 bits         9 bits     2 bits
 //! ```
 //!
-//!   Bits 0..7 are the hardware-defined flags represented by `PteFlags`.
-//!   Bits 8..9 are reserved for supervisor software and are currently unused.
-//!   Bits 10..53 hold the physical page number of either the next page table
-//!   or the mapped physical page.
+//! Bits 0..7 are the hardware-defined flags represented by `PteFlags`.
+//! Bits 8..9 are reserved for supervisor software and are currently unused.
+//! Bits 10..53 hold the physical page number of either the next page table or
+//! the mapped physical page.
 //!
 //! PTE kind:
 //!
-//!   V=0                  invalid PTE
-//!   V=1, R/W/X all zero  pointer to the next page-table level
-//!   V=1, any R/W/X set   leaf PTE mapping memory
+//! - `V=0`: invalid PTE.
+//! - `V=1, R/W/X all zero`: pointer to the next page-table level.
+//! - `V=1, any R/W/X set`: leaf PTE mapping memory.
 //!
 //! Accessed/dirty bits:
 //!
-//!   A and D are meaningful for leaf PTEs. A records that the virtual page
-//!   has been read, written, or fetched since A was last cleared. D records
-//!   that the virtual page has been written since D was last cleared.
-//!   Non-leaf PTEs should keep A, D, and U clear.
+//! A and D are meaningful for leaf PTEs. A records that the virtual page has
+//! been read, written, or fetched since A was last cleared. D records that the
+//! virtual page has been written since D was last cleared. Non-leaf PTEs should
+//! keep A, D, and U clear.
 //!
-//!   RISC-V allows two A/D management schemes:
+//! RISC-V allows two A/D management schemes:
 //!
-//!   - Svadu, or the legacy no-Svade behavior: the MMU page-table walker
-//!     updates the in-memory leaf PTE. It sets A on load, store, or fetch,
-//!     and sets D on store.
-//!   - Svade: the MMU raises a page-fault exception instead when A must be
-//!     set, or when a store needs D set. The kernel fault handler can then
-//!     update the PTE and retry the faulting instruction.
+//! - Svadu, or the legacy no-Svade behavior: the MMU page-table walker updates
+//!   the in-memory leaf PTE. It sets A on load, store, or fetch, and sets D on
+//!   store.
+//! - Svade: the MMU raises a page-fault exception instead when A must be set,
+//!   or when a store needs D set. The kernel fault handler can then update the
+//!   PTE and retry the faulting instruction.
 //!
 //! QEMU RISC-V behavior:
 //!
-//!   QEMU models this with the effective ADUE setting. If ADUE is enabled,
-//!   QEMU sets PTE_A and, for stores, PTE_D during the page-table walk before
-//!   filling the TLB. The write-back is an atomic compare-and-swap when the
-//!   PTE lives in RAM; if the PTE is in ROM or MMIO and cannot be updated,
-//!   translation fails with a page fault. If ADUE is disabled, QEMU does not
-//!   update the PTE and instead faults when A or D is required but clear.
+//! QEMU models this with the effective ADUE setting. If ADUE is enabled, QEMU
+//! sets PTE_A and, for stores, PTE_D during the page-table walk before filling
+//! the TLB. The write-back is an atomic compare-and-swap when the PTE lives in
+//! RAM; if the PTE is in ROM or MMIO and cannot be updated, translation fails
+//! with a page fault. If ADUE is disabled, QEMU does not update the PTE and
+//! instead faults when A or D is required but clear.
 //!
-//!   On QEMU 11.0.1, `qemu-system-riscv64 -machine virt` defaults to an rv64
-//!   CPU whose device tree advertises `svadu` and not `svade`; reset therefore
-//!   starts with `menvcfg.ADUE=1`, so A/D bits are automatically updated.
-//!   To test software-managed A/D faults, run with a CPU such as
-//!   `-cpu rv64,svadu=false,svade=true`. If both `svadu` and `svade` are
-//!   enabled, QEMU reset leaves ADUE clear, so M-mode software must set
-//!   `menvcfg.ADUE` to opt back into hardware-style A/D updates.
+//! On QEMU 11.0.1, `qemu-system-riscv64 -machine virt` defaults to an rv64 CPU
+//! whose device tree advertises `svadu` and not `svade`; reset therefore starts
+//! with `menvcfg.ADUE=1`, so A/D bits are automatically updated. To test
+//! software-managed A/D faults, run with a CPU such as
+//! `-cpu rv64,svadu=false,svade=true`. If both `svadu` and `svade` are enabled,
+//! QEMU reset leaves ADUE clear, so M-mode software must set `menvcfg.ADUE` to
+//! opt back into hardware-style A/D updates.
 
 use core::mem::MaybeUninit;
 use core::ptr;
@@ -98,6 +98,7 @@ use crate::mm::addr::{Pa, Va};
 
 pub const SATP_MODE_SV39: usize = 8 << 60;
 
+/// One 4 KiB Sv39 page table.
 #[repr(C, align(4096))]
 pub struct PageTable([PageTableEntry; 512]);
 
@@ -127,35 +128,36 @@ impl PageTable {
 }
 
 bitflags! {
-    // These flags occupy bits 0..7 of a 64-bit Sv39 PTE.
+    /// Hardware-defined bits 0..7 of an Sv39 page-table entry.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct PteFlags: usize {
-        /// valid. If clear, the PTE is invalid and other bits are ignored.
+        /// Valid. If clear, the PTE is invalid and other bits are ignored.
         const V = 1 << 0;
 
-        /// readable leaf mapping.
+        /// Readable leaf mapping.
         const R = 1 << 1;
 
-        /// writable leaf mapping. The spec reserves W=1,R=0 as invalid.
+        /// Writable leaf mapping. The spec reserves W=1,R=0 as invalid.
         const W = 1 << 2;
 
-        /// executable leaf mapping.
+        /// Executable leaf mapping.
         const X = 1 << 3;
 
-        /// user-accessible when set; supervisor-only when clear.
+        /// User-accessible when set; supervisor-only when clear.
         const U = 1 << 4;
 
-        /// global mapping, shared across address spaces.
+        /// Global mapping, shared across address spaces.
         const G = 1 << 5;
 
-        /// accessed. Set by hardware, or pre-set by the kernel.
+        /// Accessed. Set by hardware, or pre-set by the kernel.
         const A = 1 << 6;
 
-        /// dirty. Set by hardware on writes, or pre-set by the kernel.
+        /// Dirty. Set by hardware on writes, or pre-set by the kernel.
         const D = 1 << 7;
     }
 }
 
+/// Raw Sv39 page-table entry.
 #[derive(Clone, Copy, Default)]
 #[repr(transparent)]
 pub struct PageTableEntry(usize);
@@ -164,7 +166,7 @@ impl PageTableEntry {
     const RSW_MASK: usize = 0x3 << 8;
     const PPN_MASK: usize = ((1 << 44) - 1) << 10;
 
-    /// Store a page-aligned physical address, preserving flags and RSW
+    /// Store a page-aligned physical address, preserving flags and RSW bits.
     pub fn mut_address(&mut self, addr: Pa) -> &mut Self {
         let low = self.0 & (PteFlags::all().bits() | Self::RSW_MASK);
         self.0 = ((addr.as_raw() >> 12) << 10) | low;
@@ -178,7 +180,7 @@ impl PageTableEntry {
         self
     }
 
-    /// Decode page-aligned physical address
+    /// Decode the page-aligned physical address.
     pub fn address(&self) -> Pa {
         Pa::new(((self.0 & Self::PPN_MASK) >> 10) << 12)
     }

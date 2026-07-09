@@ -1,3 +1,9 @@
+//! Common boot handoff into the runtime kernel.
+//!
+//! Architecture-specific entry code builds [`BootInfo`], enables the initial
+//! address space, and then calls [`kernel_boot`] to initialize runtime-owned
+//! global state.
+
 use runtime::arch::consts::PAGE_SIZE;
 use runtime::dev::dt::{Fdt, prop};
 use runtime::kernel::clock::ClockMeta;
@@ -11,6 +17,7 @@ use runtime::printlnk;
 use crate::arch;
 use crate::bump::{Alloc, BUMP_ALLOCATOR, BumpAllocator};
 
+/// Information passed from architecture-specific boot code to common boot.
 #[allow(unused)]
 pub struct BootInfo {
     /// Hardware identifier of the CPU that entered the common kernel path.
@@ -19,17 +26,19 @@ pub struct BootInfo {
     pub boot_data: BootData,
 }
 
+/// Platform data supplied by firmware or the bootloader.
 pub enum BootData {
     /// Flattened Device Tree pointer, commonly used by RISC-V and ARM systems.
     DeviceTree(Fdt),
 }
 
-/// Kernel entry point
+/// Kernel entry point.
 ///
 /// `boot_info` describes the boot CPU and any platform data supplied by the
 /// architecture-specific entry code.
 ///
 /// # Safety
+///
 /// It must be called with a valid stack pointer and BSS already zeroed.
 #[unsafe(link_section = ".init.text")]
 pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {

@@ -1,3 +1,5 @@
+//! Fallible helpers for interpreting device-tree values in kernel init code.
+
 use core::num::NonZeroU64;
 
 use crate::dev::dt::FdtWalker;

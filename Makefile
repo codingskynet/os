@@ -26,7 +26,7 @@ PROFILE_RUSTFLAGS	:=
 endif
 
 TARGET_DIR := target/$(ARCH)/$(PROFILE)
-KERNEL_ARTIFACT := $(TARGET_DIR)/kernel
+KERNEL_ARTIFACT := $(TARGET_DIR)/boot
 ARTIFACTS_DIR := artifacts
 KERNEL_ELF := $(ARTIFACTS_DIR)/$(KERNEL_BASENAME).elf
 KERNEL_DEBUG := $(ARTIFACTS_DIR)/$(KERNEL_BASENAME).debug
@@ -41,7 +41,7 @@ RUSTFLAGS := \
 	-C link-arg=--no-relax \
 	-C link-arg=--orphan-handling=error
 
-.PHONY: all setup build image run clean fmt clippy typos test doc-check doc-kernel check check-boot-sections
+.PHONY: all setup build image run clean fmt clippy typos test doc-check open-doc check check-boot-sections
 
 all: build image
 
@@ -50,7 +50,7 @@ setup:
 	@scripts/setup.sh
 
 build:
-	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc -p boot --bin kernel --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
+	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc -p boot --bin boot --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
 
 $(ARTIFACTS_DIR):
 	mkdir -p $@
@@ -89,9 +89,11 @@ test:
 
 doc-check:
 	cargo test --doc -p runtime $(FEATURE_FLAGS) --target=$(ARCH)
-	cargo doc --no-deps -p boot --bin kernel $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo doc --no-deps -p runtime $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo doc --no-deps -p boot --bin boot $(FEATURE_FLAGS) --target=$(ARCH)
 
-doc-kernel:
-	cargo doc --open -p boot --bin kernel --no-deps $(FEATURE_FLAGS) --target=$(ARCH)
+open-doc:
+	cargo doc --no-deps -p runtime $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo doc --open -p runtime --no-deps $(FEATURE_FLAGS) --target=$(ARCH)
 
 check: fmt check-boot-sections clippy typos test doc-check

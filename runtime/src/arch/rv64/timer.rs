@@ -1,3 +1,5 @@
+//! RISC-V supervisor timer setup and interrupt handling.
+
 use crate::arch;
 use crate::arch::asm::interrupt::allow_timer;
 use crate::arch::asm::timer::set_deadline;

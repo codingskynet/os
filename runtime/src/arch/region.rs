@@ -1,3 +1,5 @@
+//! Linker-script regions exposed as physical address ranges.
+
 use crate::arch::consts::*;
 use crate::mm::region::Region;
 

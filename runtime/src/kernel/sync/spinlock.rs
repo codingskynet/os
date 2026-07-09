@@ -1,3 +1,5 @@
+//! Interrupt-aware spin lock.
+
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -6,20 +8,24 @@ use crossbeam_utils::CachePadded;
 
 use crate::arch::interrupt::InterruptGuard;
 
+/// Simple spin lock that masks local interrupts while held.
+///
+/// The interrupt guard prevents an interrupt handler on the same hart from
+/// trying to take the same lock while the current context owns it.
 pub struct SpinLock<T: ?Sized> {
     flag: CachePadded<AtomicBool>,
     value: UnsafeCell<T>,
 }
 
-/// SAFETY: `SpinLock<T>` owns a `T`, so moving the lock to another thread may
-/// also move the protected value there. That is only sound when `T: Send`.
+// SAFETY: `SpinLock<T>` owns a `T`, so moving the lock to another thread may
+// also move the protected value there. That is only sound when `T: Send`.
 unsafe impl<T: ?Sized + Send> Send for SpinLock<T> {}
 
-/// SAFETY: sharing `&SpinLock<T>` between threads lets any thread acquire the
-/// lock and get exclusive mutable access to `T`. The lock serializes access, so
-/// `T` does not need to be `Sync`; however, the protected value can effectively
-/// be handed from one thread to another through the lock guard, so `T: Send` is
-/// still required.
+// SAFETY: sharing `&SpinLock<T>` between threads lets any thread acquire the
+// lock and get exclusive mutable access to `T`. The lock serializes access, so
+// `T` does not need to be `Sync`; however, the protected value can effectively
+// be handed from one thread to another through the lock guard, so `T: Send` is
+// still required.
 unsafe impl<T: ?Sized + Send> Sync for SpinLock<T> {}
 
 impl<T> SpinLock<T> {
@@ -50,6 +56,7 @@ impl<T> SpinLock<T> {
     }
 }
 
+/// Guard returned by [`SpinLock::lock`].
 pub struct SpinLockGuard<'a, T: ?Sized + 'a> {
     lock: &'a SpinLock<T>,
     _guard: InterruptGuard,

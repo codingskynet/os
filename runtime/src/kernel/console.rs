@@ -1,3 +1,8 @@
+//! Kernel console and logging macros.
+//!
+//! The console starts with a platform default UART and is replaced from the
+//! device tree once boot has parsed `stdout-path`.
+
 use core::fmt::{self, Write};
 use core::ops::DerefMut;
 use core::{ptr, str};
@@ -66,10 +71,15 @@ pub fn print(args: fmt::Arguments) {
     CONSOLE.lock().write_fmt(args).unwrap();
 }
 
-pub static CONSOLE: SpinLock<Console> = SpinLock::new(Console::Ns16550(NS16550::new(
-    Pa::new(0x1000_0000).as_raw(),
-)));
+// TODO: remove and depends only on runtime installation
+// SAFETY: QEMU virt exposes an NS16550-compatible UART at this physical
+// address during early boot, before the device tree selects the final
+// console.
+pub static CONSOLE: SpinLock<Console> = SpinLock::new(Console::Ns16550(unsafe {
+    NS16550::new(Pa::new(0x1000_0000).as_raw())
+}));
 
+/// Installed console backend.
 pub enum Console {
     Ns16550(NS16550),
 }

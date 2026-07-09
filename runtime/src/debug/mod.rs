@@ -1,3 +1,8 @@
+//! Debug and smoke-test helpers.
+//!
+//! These routines are intended for early bring-up and debug builds. They may
+//! inspect allocator metadata directly and print kernel-internal state.
+
 use core::fmt;
 
 use crate::arch::consts::PAGE_SIZE;

@@ -1,3 +1,5 @@
+//! Page-fault dispatch for RISC-V supervisor traps.
+
 use crate::arch::trap::{Exception, TrapFrame};
 
 pub fn handle_page_fault(frame: &mut TrapFrame, exception: Exception) {

@@ -24,9 +24,9 @@ unsafe extern "C" {
 ///
 /// 0x0000_0040_0000_0000 .. 0xffff_ffc0_0000_0000  non-canonical hole
 ///
-/// 0xffff_ffc0_0000_0000 .. 0xffff_ffd0_0000_0000  MMIO direct map, 64 GiB
+/// 0xffff_ffc0_0000_0000 .. 0xffff_ffd0_0000_0000  MMIO direct map, 64 GiB(TODO)
 /// 0xffff_ffd0_0000_0000 .. 0xffff_fff0_0000_0000  physical direct map, 128 GiB
-/// 0xffff_fff0_0000_0000 .. 0xffff_fffe_0000_0000  (empty), 64GiB - 256 MiB
+/// 0xffff_fff0_0000_0000 .. 0xffff_ffff_f000_0000  reserved gap
 /// 0xffff_ffff_f000_0000 .. 0x0000_0000_0000_0000  kernel image, 256 MiB
 /// ```
 ///
