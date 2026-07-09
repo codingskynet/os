@@ -3,8 +3,8 @@ use core::num::NonZeroUsize;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
+use super::*;
 use crate::mm::addr::{Pa, Va};
-use crate::mm::page_meta::{Buddy, BuddyPageMeta, OwnedPageMeta, PageMeta, PageMetaState};
 use crate::util::linked_list::{Node, Pointer};
 
 pub enum Slab {}

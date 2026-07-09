@@ -3,10 +3,10 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use core::{mem, slice};
 
+use super::*;
 use crate::arch::consts::PAGE_SIZE;
 use crate::mm::addr::Pa;
 use crate::mm::is_same_page_meta_section;
-use crate::mm::page_meta::{OwnedPageMeta, PageMeta, PageMetaState, Slab, SlabPageMeta};
 use crate::util::linked_list::Node;
 
 pub enum Buddy {}

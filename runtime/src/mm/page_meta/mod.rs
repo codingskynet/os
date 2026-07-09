@@ -3,6 +3,7 @@ pub use slab::*;
 pub use uninit::*;
 
 mod buddy;
+mod reserved;
 mod slab;
 mod uninit;
 
@@ -15,6 +16,7 @@ use arrayvec::ArrayVec;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::mm::addr::Pa;
+use crate::mm::page_meta::reserved::Reserved;
 use crate::mm::region::Region;
 
 pub struct PageMetaMap {
@@ -226,8 +228,6 @@ pub enum PageMetaState {
     Slab(SlabPageMeta),
 }
 
-pub enum Reserved {}
-
 pub struct OwnedPageMeta<S> {
     page_meta: NonNull<PageMeta>,
     _marker: PhantomData<S>,
@@ -248,20 +248,5 @@ impl<S> OwnedPageMeta<S> {
 
     fn as_mut(&mut self) -> &mut PageMetaState {
         unsafe { self.page_meta.as_mut() }
-    }
-}
-
-impl OwnedPageMeta<Reserved> {
-    pub fn into_buddy(mut self) -> OwnedPageMeta<Buddy> {
-        let reserved: &mut [PageMeta] = &mut [];
-        *self.as_mut() = PageMetaState::Buddy(BuddyPageMeta {
-            reserved: NonNull::from(reserved),
-            next: None,
-        });
-
-        OwnedPageMeta {
-            page_meta: self.page_meta,
-            _marker: PhantomData,
-        }
     }
 }
