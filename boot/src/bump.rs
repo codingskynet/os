@@ -108,6 +108,7 @@ impl BumpAllocator {
         ));
     }
 
+    #[unsafe(link_section = ".init.text")]
     fn reserve(&mut self, region: Region) {
         for mem in self.memories.iter_mut() {
             if mem.reserve(region).is_ok() {

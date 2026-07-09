@@ -196,6 +196,7 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
     // Map the high kernel image with page-granular permissions. The init
     // island is temporary and reclaimable, so keep it broadly accessible until
     // boot code has fully handed off to runtime-owned stacks and text.
+    #[unsafe(link_section = ".init.text")]
     fn map_kernel(
         mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>,
         root: &mut PageTable,
