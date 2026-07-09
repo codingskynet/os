@@ -9,8 +9,7 @@ use runtime::mm::{BUDDY, PAGE_META_MAP};
 use runtime::printlnk;
 
 use crate::arch;
-use crate::bump::{Alloc, BumpAllocator};
-use crate::init::kernel_init;
+use crate::bump::{Alloc, BUMP_ALLOCATOR, BumpAllocator};
 
 #[allow(unused)]
 pub struct BootInfo {
@@ -32,6 +31,7 @@ pub enum BootData {
 ///
 /// # Safety
 /// It must be called with a valid stack pointer and BSS already zeroed.
+#[unsafe(link_section = ".init.text")]
 pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
     let mut token = FreezableToken::take().expect("failed to take FreezableToken");
     match &boot_info.boot_data {
@@ -47,24 +47,25 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
 
             console::install_from_fdt(fdt).expect("failed to install console");
 
-            let mut allocator =
-                BumpAllocator::new(fdt).expect("failed to initialize BumpAllocator");
+            let mut allocator = BUMP_ALLOCATOR.lock();
+            allocator.init(fdt);
             arch::paging::init_page_table(fdt, || {
                 allocator
                     .alloc_uninit()
                     .expect("failed to allocate PageTable")
             });
-            init_page_metadata(&mut token, allocator);
+            init_page_metadata(&mut token, &mut allocator);
         }
     }
 
     token.forget();
     runtime::arch::trap::init();
     runtime::arch::timer::init();
-    kernel_init();
+    runtime::kernel::init::kernel_init();
 }
 
-fn init_page_metadata(token: &mut FreezableToken, mut allocator: BumpAllocator) {
+#[unsafe(link_section = ".init.text")]
+fn init_page_metadata(token: &mut FreezableToken, allocator: &mut BumpAllocator) {
     for memory in allocator.memories_mut() {
         let memory_region = memory.region();
         let offset = memory_region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE.get();

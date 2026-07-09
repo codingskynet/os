@@ -4,6 +4,8 @@ use crate::util::consts::*;
 
 unsafe extern "C" {
     pub static _kernel_start: u8;
+    pub static _init_start: u8;
+    pub static _init_end: u8;
     pub static _text_start: u8;
     pub static _text_end: u8;
     pub static _rodata_start: u8;
@@ -53,3 +55,5 @@ pub const KERNEL_VMA_OFFSET: usize = KERNEL_VMA_BASE - KERNEL_LMA_BASE;
 
 pub const PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(4 * K).unwrap();
 pub const HUGE_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(2 * M).unwrap();
+
+pub const STACK_SIZE: NonZeroUsize = NonZeroUsize::new(16 * K).unwrap();

@@ -41,7 +41,7 @@ RUSTFLAGS := \
 	-C link-arg=--no-relax \
 	-C link-arg=--orphan-handling=error
 
-.PHONY: all setup build image run clean fmt clippy typos test doc-check doc-kernel check
+.PHONY: all setup build image run clean fmt clippy typos test doc-check doc-kernel check check-boot-sections
 
 all: build image
 
@@ -81,6 +81,9 @@ clippy:
 typos:
 	typos
 
+check-boot-sections:
+	python3 scripts/check-boot-sections.py
+
 test:
 	cargo test -p runtime-test --lib --target=$(HOST_ARCH)
 
@@ -91,4 +94,4 @@ doc-check:
 doc-kernel:
 	cargo doc --open -p boot --bin kernel --no-deps $(FEATURE_FLAGS) --target=$(ARCH)
 
-check: fmt clippy typos test doc-check
+check: fmt check-boot-sections clippy typos test doc-check

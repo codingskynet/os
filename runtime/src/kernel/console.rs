@@ -2,7 +2,7 @@ use core::fmt::{self, Write};
 use core::ops::DerefMut;
 use core::{ptr, str};
 
-use crate::dev::dt::Fdt;
+use crate::dev::dt::{Fdt, RegIter};
 use crate::dev::uart::ns16550::NS16550;
 use crate::kernel::dt;
 use crate::kernel::dt::{FdtWalkeraExt, ValueaExt};
@@ -89,19 +89,7 @@ pub fn install_from_fdt(fdt: &Fdt) -> Result<(), Error> {
     // strip optional colon+options suffix, e.g. "/soc/serial@10000000:57600"
     let path = stdout_path.split(':').next().ok_or(Error::InvalidPath)?;
 
-    let mut compatible = None;
-    let mut reg = None;
-    let walker = fdt.lookup(path);
-    let (address_cells, size_cells) = walker.reg_cells();
-    for (name, value) in walker.props() {
-        match name {
-            "compatible" => compatible = Some(value.into_str_or_err()?),
-            "reg" => reg = Some(value.into_reg(address_cells, size_cells)),
-            _ => {}
-        }
-    }
-
-    let (compatible, mut reg) = compatible.zip(reg).ok_or(Error::InvalidMmio)?;
+    let (compatible, mut reg) = mmio_info(fdt, path)?;
 
     // install console for known devices
     if ["ns16550", "ns16550a"].contains(&compatible) {
@@ -123,6 +111,22 @@ pub fn install_from_fdt(fdt: &Fdt) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+fn mmio_info<'a>(fdt: &'a Fdt, path: &'a str) -> Result<(&'a str, RegIter<'a>), Error> {
+    let walker = fdt.lookup(path);
+    let mut compatible = None;
+    let mut reg = None;
+    let (address_cells, size_cells) = walker.reg_cells();
+    for (name, value) in walker.props() {
+        match name {
+            "compatible" => compatible = Some(value.into_str_or_err()?),
+            "reg" => reg = Some(value.into_reg(address_cells, size_cells)),
+            _ => {}
+        }
+    }
+
+    compatible.zip(reg).ok_or(Error::InvalidMmio)
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -20,7 +20,6 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "runtime",
- "thiserror",
 ]
 
 [[package]]

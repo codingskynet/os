@@ -89,6 +89,9 @@
 //!   enabled, QEMU reset leaves ADUE clear, so M-mode software must set
 //!   `menvcfg.ADUE` to opt back into hardware-style A/D updates.
 
+use core::mem::MaybeUninit;
+use core::ptr;
+
 use bitflags::bitflags;
 
 use crate::mm::addr::{Pa, Va};
@@ -98,15 +101,24 @@ pub const SATP_MODE_SV39: usize = 8 << 60;
 #[repr(C, align(4096))]
 pub struct PageTable([PageTableEntry; 512]);
 
-impl Default for PageTable {
-    fn default() -> Self {
-        Self([PageTableEntry::default(); 512])
-    }
-}
-
 impl PageTable {
-    pub const fn new() -> Self {
-        Self([PageTableEntry(0); 512])
+    pub fn init_mut(page_table: &mut MaybeUninit<Self>) -> &mut Self {
+        unsafe { &mut *Self::init_raw_mut(page_table) }
+    }
+
+    /// Zero-initialize a page-table slot without materializing a 4 KiB
+    /// `PageTable` temporary on the current stack.
+    ///
+    /// # Safety
+    ///
+    /// `page_table` must be non-null, properly aligned, valid for writes of
+    /// `PageTable`, and uniquely owned for the duration of initialization.
+    pub unsafe fn init_raw_mut(page_table: *mut MaybeUninit<Self>) -> *mut Self {
+        let page_table = page_table.cast::<Self>();
+        unsafe {
+            ptr::write_bytes(page_table, 0, 1);
+        }
+        page_table
     }
 
     pub fn entry(&mut self, index: usize) -> &mut PageTableEntry {
@@ -171,28 +183,41 @@ impl PageTableEntry {
         Pa::new(((self.0 & Self::PPN_MASK) >> 10) << 12)
     }
 
-    // pub fn page_table(&self) -> Option<&mut PageTable> {
-    //     if self.flags().contains(PteFlags::V) {
-    //         unsafe { Some(&mut *(self.address().to_va().as_mut_ptr())) }
-    //     } else {
-    //         None
-    //     }
-    // }
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
 
-    pub fn or_insert_with(&mut self, default: impl FnOnce() -> *mut PageTable) -> &mut PageTable {
+    pub fn is_valid(&self) -> bool {
+        self.flags().contains(PteFlags::V)
+    }
+
+    pub fn is_leaf(&self) -> bool {
+        self.flags()
+            .intersects(PteFlags::R | PteFlags::W | PteFlags::X)
+    }
+
+    pub fn page_table_mut(&mut self) -> Option<&mut PageTable> {
+        if self.is_valid() && !self.is_leaf() {
+            Some(unsafe { &mut *(self.address().into_va().as_mut_ptr()) })
+        } else {
+            None
+        }
+    }
+
+    pub fn or_insert_with(
+        &mut self,
+        alloc: impl FnOnce() -> &'static mut MaybeUninit<PageTable>,
+    ) -> &mut PageTable {
         if self.flags().contains(PteFlags::V) {
             return unsafe { &mut *(self.address().into_va().as_mut_ptr()) };
         }
 
-        let page_table = unsafe { &mut *default() };
-        *page_table = PageTable::default();
-
+        let page_table = PageTable::init_mut(alloc());
         self.mut_address(Va::from(&mut *page_table).into_pa())
             .mut_flags(PteFlags::V);
         page_table
     }
 
-    /// Decode PTE flags
     pub fn flags(&self) -> PteFlags {
         PteFlags::from_bits_truncate(self.0)
     }

@@ -6,17 +6,21 @@ members = [
 ]
 resolver = "3"
 
-[workspace.package]
-version = "0.1.0"
-edition = "2024"
-
 [profile.dev]
 panic = "abort"
 
 [profile.release]
 panic = "abort"
 debug = true
-lto = true
+lto = "thin"
+
+[workspace.lints.clippy]
+large_stack_frames = "deny"
+large_stack_arrays = "deny"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
 
 [workspace.dependencies]
 runtime = { path = "runtime" }

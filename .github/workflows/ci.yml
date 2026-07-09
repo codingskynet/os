@@ -32,6 +32,9 @@ jobs:
       - name: Format (rustfmt)
         run: ./fmt --check
 
+      - name: Boot section annotations
+        run: make check-boot-sections
+
       - name: Lint (clippy)
         run: cargo clippy --target=${{ env.ARCH }} --release -- -D warnings
 

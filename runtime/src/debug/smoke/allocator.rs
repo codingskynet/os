@@ -4,10 +4,9 @@ use core::ptr;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::arch::interrupt::InterruptGuard;
-use crate::debug::dump_page_list;
 use crate::mm::addr::{Pa, Va};
 use crate::mm::page_meta::PageMetaState;
-use crate::mm::{BUDDY, GLOBAL, page_meta_at};
+use crate::mm::{GLOBAL, page_meta_at};
 use crate::printlnk;
 
 pub fn smoke() {
@@ -15,40 +14,6 @@ pub fn smoke() {
     // stable while dumping and fuzzing it.
     let _guard = InterruptGuard::new();
 
-    dump_page_list();
-    printlnk!("{:#?}", *BUDDY.lock());
-    run();
-    dump_page_list();
-    printlnk!("{:#?}", *BUDDY.lock());
-}
-
-const ITERATIONS: usize = 65536;
-const SLOTS: usize = 64;
-
-const SIZES: [usize; 37] = [
-    1, 2, 3, 4, 7, 8, 15, 16, 24, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512,
-    513, 1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, 6000, 8192, 12000, 16384,
-];
-
-const ALIGNS: [usize; 14] = [
-    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
-];
-
-const SLAB_MIN_SIZE: usize = 32;
-const SLAB_MAX_SIZE: usize = 4096;
-const OBJECTS_PER_SLAB_BLOCK: usize = 4;
-
-/// Minimum guard-band width placed on each side of the user payload.
-/// The leading band is padded up to the requested alignment
-/// so the payload itself stays aligned.
-const REDZONE: usize = 16;
-
-/// Guard byte written into every redzone slot. Any mismatch on verification
-/// means the allocator handed out a region that overlaps its neighbour or is
-/// smaller than requested (an out-of-bounds / under-allocation bug).
-const REDZONE_BYTE: u8 = 0x39;
-
-fn run() {
     printlnk!("allocator fuzz: start");
 
     let mut rng = Rng::new(0x0f5a_b10c_a110_ca7e);
@@ -102,6 +67,32 @@ fn run() {
         checks
     );
 }
+
+const ITERATIONS: usize = 65536;
+const SLOTS: usize = 64;
+
+const SIZES: [usize; 37] = [
+    1, 2, 3, 4, 7, 8, 15, 16, 24, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512,
+    513, 1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097, 6000, 8192, 12000, 16384,
+];
+
+const ALIGNS: [usize; 14] = [
+    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192,
+];
+
+const SLAB_MIN_SIZE: usize = 32;
+const SLAB_MAX_SIZE: usize = 4096;
+const OBJECTS_PER_SLAB_BLOCK: usize = 4;
+
+/// Minimum guard-band width placed on each side of the user payload.
+/// The leading band is padded up to the requested alignment
+/// so the payload itself stays aligned.
+const REDZONE: usize = 16;
+
+/// Guard byte written into every redzone slot. Any mismatch on verification
+/// means the allocator handed out a region that overlaps its neighbour or is
+/// smaller than requested (an out-of-bounds / under-allocation bug).
+const REDZONE_BYTE: u8 = 0x39;
 
 fn alloc_slot(rng: &mut Rng, step: usize) -> Slot {
     let size = SIZES[rng.index(SIZES.len())];

@@ -7,30 +7,36 @@ use arrayvec::ArrayVec;
 use runtime::arch::{self};
 use runtime::dev::dt::Fdt;
 use runtime::dev::dt::memory::MemoryIter;
+use runtime::kernel::sync::SpinLock;
 use runtime::mm::addr::Pa;
 use runtime::mm::region::Region;
 use runtime::{debug, printlnk};
 
-pub trait Alloc {
-    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Result<Pa, Error>;
+#[unsafe(link_section = ".init.bss")]
+pub static BUMP_ALLOCATOR: SpinLock<BumpAllocator> = SpinLock::new(BumpAllocator::empty());
 
+pub trait Alloc {
+    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Pa>;
+
+    #[unsafe(link_section = ".init.text")]
     fn alloc_slice<T>(
         &mut self,
         len: usize,
         init: impl Fn(usize) -> T,
-    ) -> Result<&'static mut [T], Error> {
+    ) -> Option<&'static mut [T]> {
         let data = self.alloc_slice_uninit(len)?;
 
         for (i, elem) in data[..].iter_mut().enumerate() {
             elem.write(init(i));
         }
 
-        Ok(unsafe { mem::transmute::<&mut [core::mem::MaybeUninit<T>], &mut [T]>(data) })
+        Some(unsafe { mem::transmute::<&mut [core::mem::MaybeUninit<T>], &mut [T]>(data) })
     }
 
-    fn alloc_uninit<T>(&mut self) -> Result<&'static mut MaybeUninit<T>, Error> {
+    #[unsafe(link_section = ".init.text")]
+    fn alloc_uninit<T>(&mut self) -> Option<&'static mut MaybeUninit<T>> {
         let Some(size) = NonZeroUsize::new(mem::size_of::<T>()) else {
-            return Ok(unsafe { &mut *NonNull::dangling().as_ptr() });
+            return Some(unsafe { &mut *NonNull::dangling().as_ptr() });
         };
 
         let pa = self.alloc_raw(
@@ -40,15 +46,13 @@ pub trait Alloc {
         )?;
         let ptr: *mut MaybeUninit<T> = pa.into_va().as_mut_ptr();
 
-        Ok(unsafe { &mut *ptr })
+        Some(unsafe { &mut *ptr })
     }
 
-    fn alloc_slice_uninit<T>(
-        &mut self,
-        len: usize,
-    ) -> Result<&'static mut [MaybeUninit<T>], Error> {
+    #[unsafe(link_section = ".init.text")]
+    fn alloc_slice_uninit<T>(&mut self, len: usize) -> Option<&'static mut [MaybeUninit<T>]> {
         let Some(size) = NonZeroUsize::new(mem::size_of::<T>() * len) else {
-            return Ok(unsafe { slice::from_raw_parts_mut(NonNull::dangling().as_ptr(), len) });
+            return Some(unsafe { slice::from_raw_parts_mut(NonNull::dangling().as_ptr(), len) });
         };
 
         let pa = self.alloc_raw(
@@ -58,14 +62,8 @@ pub trait Alloc {
         )?;
         let ptr: *mut MaybeUninit<T> = pa.into_va().as_mut_ptr();
 
-        Ok(unsafe { slice::from_raw_parts_mut(ptr, len) })
+        Some(unsafe { slice::from_raw_parts_mut(ptr, len) })
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Out of memory")]
-    OutOfMemory,
 }
 
 pub struct BumpAllocator {
@@ -73,57 +71,55 @@ pub struct BumpAllocator {
 }
 
 impl Alloc for BumpAllocator {
-    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Result<Pa, Error> {
+    #[unsafe(link_section = ".init.text")]
+    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Pa> {
         for mem in self.memories.iter_mut() {
-            if let Ok(pa) = mem.alloc_raw(size, align) {
-                return Ok(pa);
+            if let Some(pa) = mem.alloc_raw(size, align) {
+                return Some(pa);
             }
         }
 
-        Err(Error::OutOfMemory)
+        None
     }
 }
 
 impl BumpAllocator {
-    pub fn new(fdt: &Fdt) -> Result<Self, Error> {
-        let regs = MemoryIter::new(fdt);
-        let mut memory = ArrayVec::from_iter(
-            regs.into_iter()
-                .map(|(addr, size)| {
-                    let addr = Pa::new(addr as usize);
-                    (addr, addr.checked_offset(size.get()).unwrap())
-                })
-                .inspect(|(from, to)| debug!("bump: register memory {from} ~ {to}"))
-                .map(|(from, to)| Region::new(from, to).unwrap())
-                .map(Memory::new),
-        );
+    #[unsafe(link_section = ".init.text")]
+    pub const fn empty() -> Self {
+        Self {
+            memories: ArrayVec::new_const(),
+        }
+    }
 
-        let mut reserved: ArrayVec<Region, 32> = ArrayVec::new();
-        reserved.push(arch::region::kernel());
-        reserved.push(Region::from_raw(
+    #[unsafe(link_section = ".init.text")]
+    pub fn init(&mut self, fdt: &Fdt) {
+        self.memories.clear();
+        for (addr, size) in MemoryIter::new(fdt) {
+            let region = Region::from_size(Pa::new(addr as usize), size).unwrap();
+            debug!("bump: register memory {region:?}");
+            self.memories.push(Memory::new(region));
+        }
+
+        // TODO: add reserve-memory from FDT
+        self.reserve(arch::region::kernel());
+        self.reserve(Region::from_raw(
             fdt.as_ptr(),
             fdt.as_ptr().wrapping_add(fdt.total_size()),
         ));
-        // TODO: add reserve-memory from FDT
-        reserved.sort_unstable();
+    }
 
-        for r in reserved {
-            debug!("bump: reserve {r:?}");
-            let mut reserved = false;
-            for mem in memory.iter_mut() {
-                if mem.reserve(r).is_ok() {
-                    reserved = true;
-                    break;
-                }
-            }
-            if !reserved {
-                printlnk!("bump: failed to reserve region: {r:?}");
+    #[unsafe(link_section = ".init.text")]
+    fn reserve(&mut self, region: Region) {
+        for mem in self.memories.iter_mut() {
+            if mem.reserve(region).is_ok() {
+                return;
             }
         }
 
-        Ok(Self { memories: memory })
+        printlnk!("bump: failed to reserve region: {region:?}");
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn memories_mut(&mut self) -> &mut [Memory] {
         &mut self.memories
     }
@@ -135,15 +131,14 @@ pub struct Memory {
 }
 
 impl Alloc for Memory {
-    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Result<Pa, Error> {
-        match self.alloc(size, align) {
-            Ok(region) => Ok(region.start),
-            Err(_) => Err(Error::OutOfMemory),
-        }
+    #[unsafe(link_section = ".init.text")]
+    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Pa> {
+        self.alloc(size, align).map(|region| region.start)
     }
 }
 
 impl Memory {
+    #[unsafe(link_section = ".init.text")]
     pub fn new(region: Region) -> Self {
         Self {
             region,
@@ -151,14 +146,17 @@ impl Memory {
         }
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn region(&self) -> Region {
         self.region
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn reserved(&self) -> &[Region] {
         self.reserved.as_slice()
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn reserve(&mut self, region: Region) -> Result<(), Region> {
         if self.region.start <= region.start && region.end <= self.region.end {
             self.reserved.alloc(region)
@@ -167,7 +165,8 @@ impl Memory {
         }
     }
 
-    pub fn alloc(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Result<Region, ()> {
+    #[unsafe(link_section = ".init.text")]
+    pub fn alloc(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Region> {
         let mut allocation = None;
         for free in self.free_iter() {
             let region = Region::from_size(free.start.align_up(align), size).unwrap();
@@ -182,12 +181,13 @@ impl Memory {
         if let Some(allocation) = allocation
             && self.reserve(allocation).is_ok()
         {
-            Ok(allocation)
+            Some(allocation)
         } else {
-            Err(())
+            None
         }
     }
 
+    #[unsafe(link_section = ".init.text")]
     fn free_iter(&self) -> FreeRegionIterator<'_> {
         FreeRegionIterator {
             region: self.region,
@@ -202,21 +202,25 @@ pub struct RegionSet<const N: usize> {
     regions: ArrayVec<Region, N>,
 }
 
+#[unsafe(link_section = ".init.text")]
 fn overlap(region: Region, other: Option<Region>) -> bool {
     other.is_some_and(|other| region.overlap(other))
 }
 
 impl<const N: usize> RegionSet<N> {
+    #[unsafe(link_section = ".init.text")]
     pub const fn new() -> Self {
         Self {
             regions: ArrayVec::new_const(),
         }
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn as_slice(&self) -> &[Region] {
         &self.regions
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn is_allocable(&self, region: Region) -> bool {
         if region.is_empty() {
             return true;
@@ -226,6 +230,7 @@ impl<const N: usize> RegionSet<N> {
         !overlap(region, left) && !overlap(region, right)
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn alloc(&mut self, region: Region) -> Result<(), Region> {
         if region.is_empty() {
             return Ok(());
@@ -262,10 +267,12 @@ impl<const N: usize> RegionSet<N> {
             .map_err(|e| e.element())
     }
 
+    #[unsafe(link_section = ".init.text")]
     pub fn iter(&self) -> Iter<'_, Region> {
         self.regions.iter()
     }
 
+    #[unsafe(link_section = ".init.text")]
     fn neighbors(&self, region: Region) -> (usize, Option<Region>, Option<Region>) {
         let index = self
             .regions
@@ -291,6 +298,7 @@ pub struct FreeRegionIterator<'a> {
 impl<'a> Iterator for FreeRegionIterator<'a> {
     type Item = Region;
 
+    #[unsafe(link_section = ".init.text")]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if self.is_end {

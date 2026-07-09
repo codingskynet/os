@@ -1,10 +1,4 @@
 //! RISC-V 64-bit architecture support.
-//!
-//! *Entry* — boot-owned assembly entry and early MMU transition helpers.
-//! *Trap* —   (TODO) trap vector, exception / interrupt handling.
-//! *Paging* — (TODO) page table management (satp).
-//! *Timer* —  (TODO) RISC-V timer (mtime/mtimecmp).
-//! *Context* — (TODO) context-switch assembly (`__switch`).
 
 macro_rules! riscv_privileged_isa_version {
     () => {
@@ -27,6 +21,7 @@ pub mod asm;
 pub mod consts;
 pub mod page_fault;
 pub mod page_table;
+pub mod paging;
 pub mod regs;
 pub mod switch;
 pub mod timer;

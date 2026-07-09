@@ -28,8 +28,8 @@ OUTPUT_ARCH( "riscv" )
  * unless gp and the matching virtual mapping are already established.
  *
  * build.rs injects KERNEL_LMA_BASE, KERNEL_VMA_BASE, KERNEL_VMA_OFFSET,
- * PAGE_SIZE, and HUGE_PAGE_SIZE from src/arch/rv64/consts.rs. Keep Rust as
- * the single source for memory-layout constants.
+ * PAGE_SIZE, HUGE_PAGE_SIZE, and STACK_SIZE from src/arch/rv64/consts.rs.
+ * Keep Rust as the single source for memory-layout constants.
  */
 
 /* ---------------------------------------------------------------------------
@@ -80,12 +80,19 @@ SECTIONS
          "PAGE_SIZE must be provided by build.rs")
   ASSERT(DEFINED(HUGE_PAGE_SIZE),
          "HUGE_PAGE_SIZE must be provided by build.rs")
+  ASSERT(DEFINED(STACK_SIZE),
+         "STACK_SIZE must be provided by build.rs")
+
   ASSERT(PAGE_SIZE > 0 && ((PAGE_SIZE & (PAGE_SIZE - 1)) == 0),
          "PAGE_SIZE must be a non-zero power of two")
   ASSERT(HUGE_PAGE_SIZE > 0 && ((HUGE_PAGE_SIZE & (HUGE_PAGE_SIZE - 1)) == 0),
          "HUGE_PAGE_SIZE must be a non-zero power of two")
   ASSERT((HUGE_PAGE_SIZE % PAGE_SIZE) == 0,
          "HUGE_PAGE_SIZE must be a multiple of PAGE_SIZE")
+  ASSERT(STACK_SIZE > 0,
+         "STACK_SIZE must be non-zero")
+  ASSERT((STACK_SIZE % 16) == 0,
+         "STACK_SIZE must preserve the RISC-V stack alignment")
 
   . = KERNEL_VMA_BASE;
   _kernel_start = .;
@@ -98,40 +105,57 @@ SECTIONS
          "KERNEL_VMA_OFFSET must preserve HUGE_PAGE_SIZE alignment")
 
   /* ========================================================================
-   *  .text.init — Entry point section
+   *  .init — Reclaimable boot-time code and data
    *
-   *  PURPOSE: Guarantee _start is at binary offset 0 (= 0x80000000).
+   *  PURPOSE:
+   *  - Keep _start at binary offset 0 (= 0x80000000 for QEMU -kernel).
+   *  - Gather explicitly annotated boot-time input sections into one
+   *    page-aligned island that can later be unmapped and returned to the
+   *    allocator.
    *
-   *  KEEP()
-   *  Prevents --gc-sections (dead-stripping) from removing this section.
-   *  Without KEEP(), the linker might think .text.init has no references
-   *  since _start is called implicitly by hardware reset, not by any
-   *  call instruction in the code.
-   *
-   *  ALIGN(4)
-   *  RISC-V instructions are exactly 4 bytes (one word) and must be
-   *  4-byte aligned. ALIGN(4) ensures the section starts at a multiple
-   *  of 4 — both for alignment and for consistent disassembly.
-   *
-   *  WHY DOES THIS WORK ON QEMU?
-   *  QEMU's -kernel loads the binary into RAM at 0x80000000 and jumps
-   *  to that exact address. If the very first 4 bytes are NOT _start,
-   *  execution begins in the middle of Rust code or garbage — instant fault.
+   *  Boot code uses small section macros instead of a crate-name wildcard, so
+   *  this boundary can be audited even when release LTO is enabled. Function
+   *  section annotations do not automatically move compiler-generated anonymous
+   *  rodata, such as string literals and panic metadata; audit .rodata before
+   *  claiming that every boot-owned byte is reclaimable.
    * ======================================================================== */
-  . = ALIGN(4);
-  .text.init KERNEL_VMA_BASE : AT(KERNEL_LMA_BASE)
+  . = ALIGN(PAGE_SIZE);
+  .init KERNEL_VMA_BASE : AT(KERNEL_LMA_BASE)
   {
-    _text_start = .;                    /* "." = current location counter */
-    KEEP(*(.text.init))            /* Collect ALL .text.init input sections */
-    . = ALIGN(4);
+    _init_start = .;
+
+    KEEP(*(.text.init))            /* _start must remain the first byte. */
+    *(.init.text .init.text.*)
+    . = ALIGN(8);
+
+    *(.init.rodata .init.rodata.*)
+    . = ALIGN(8);
+
+    *(.init.data .init.data.*)
+    . = ALIGN(8);
+
+    _init_bss_start = .;
+    *(.init.bss .init.bss.*)
+
+    /* Hart 0 uses this stack until Rust switches to runtime-owned stacks. */
+    . = ALIGN(16);
+    boot_stack = .;
+    . += STACK_SIZE;
+    boot_stack_top = .;
+
+    . = ALIGN(PAGE_SIZE);
+    _init_bss_end = .;
+    _init_end = .;
   } :text
 
-  ASSERT(_text_start == KERNEL_VMA_BASE,
+  ASSERT(_init_start == KERNEL_VMA_BASE,
          "_start must be the first byte in the linked kernel image")
-  ASSERT(LOADADDR(.text.init) == KERNEL_LMA_BASE,
-         ".text.init must load at the QEMU virt reset address")
-  ASSERT((_text_start % PAGE_SIZE) == 0,
-         "_text_start must be PAGE_SIZE-aligned")
+  ASSERT(LOADADDR(.init) == KERNEL_LMA_BASE,
+         ".init must load at the QEMU virt reset address")
+  ASSERT((_init_start % PAGE_SIZE) == 0,
+         "_init_start must be PAGE_SIZE-aligned")
+  ASSERT((_init_end % PAGE_SIZE) == 0,
+         "_init_end must be PAGE_SIZE-aligned")
 
   /* ========================================================================
    *  .text — Main kernel code
@@ -151,9 +175,9 @@ SECTIONS
    *    - Setting up MMU permissions (RX vs RO/RW)
    *    - Self-checks / integrity hashing
    * ======================================================================== */
-  . = ALIGN(4);
   .text : AT(ADDR(.text) - KERNEL_VMA_OFFSET)
   {
+    _text_start = .;
     *(.text .text.*)
     . = ALIGN(4);
   } :text
@@ -178,6 +202,7 @@ SECTIONS
   .rodata : AT(ADDR(.rodata) - KERNEL_VMA_OFFSET)
   {
     _rodata_start = .;
+    *(.srodata .srodata.*)
     *(.rodata .rodata.*)
     . = ALIGN(4);
   } :rodata
@@ -219,8 +244,8 @@ SECTIONS
    *  BSS = "Block Started by Symbol" (historical IBM 7094 term).
    *  Stores global/static variables that start at zero.
    *  BSS takes NO space in the ELF file (only the .bss ELF section header
-   *  records its size). The boot code zeros it at runtime in boot.s
-   *  (la t0, _bss_start; la t1, _bss_end; loop: sd zero, 0(t0); ...).
+   *  records its size). The boot code zeros both .init's BSS range and this
+   *  live .bss range at runtime in boot.s.
    *
    *  RISC-V NOTE:
    *  *(.sbss .sbss.*) collects small-BSS for GP-relative access, same

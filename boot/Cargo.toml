@@ -9,6 +9,9 @@ smoke-allocator = ["runtime/smoke-allocator"]
 smoke-page-fault = ["runtime/smoke-page-fault"]
 smoke-kernel-thread = ["runtime/smoke-kernel-thread"]
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "kernel"
 path = "src/main.rs"
@@ -18,4 +21,3 @@ bench = false
 [dependencies]
 arrayvec.workspace = true
 runtime.workspace = true
-thiserror.workspace = true

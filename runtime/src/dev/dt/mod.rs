@@ -235,7 +235,7 @@ struct FdtWalkerState<'a> {
     strings_slice: &'a [u8],
     len: usize,
     depth: usize,
-    cells: ArrayVec<(u32, u32), 16>,
+    cells: ArrayVec<(u32, u32), 8>,
 }
 
 const FDT_BEGIN_NODE: u32 = 1;

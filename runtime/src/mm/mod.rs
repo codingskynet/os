@@ -31,6 +31,20 @@ pub fn is_same_page_meta_section(lhs: Pa, rhs: Pa) -> bool {
     PAGE_META_MAP.is_same_section(lhs, rhs)
 }
 
+pub fn free_init() {
+    let init = crate::arch::region::init();
+
+    crate::arch::paging::unmap_kernel_region(init);
+
+    let mut buddy = BUDDY.lock();
+    let mut pa = init.start;
+    while pa < init.end {
+        let page = unsafe { page_meta_at(pa).owned_reserved().into_buddy() };
+        buddy.free(page);
+        pa = pa.checked_offset(PAGE_SIZE.get()).unwrap();
+    }
+}
+
 const SLAB_MIN_SIZE: usize = 32;
 const SLAB_MAX_SIZE: usize = 4096;
 const SLAB_MIN_ORDER: usize = SLAB_MIN_SIZE.trailing_zeros() as usize;
@@ -42,6 +56,12 @@ pub struct Allocator {
 }
 
 impl Allocator {
+    // This constructor is intentionally used only by the `GLOBAL` static
+    // initializer below. Because it is a private `const fn`, the slab table is
+    // materialized into the kernel image at compile time instead of being built
+    // on a runtime stack. If this ever needs to be called at runtime, revisit
+    // this allow and initialize the object in-place instead.
+    #[allow(clippy::large_stack_frames, clippy::large_stack_arrays)]
     const fn new() -> Self {
         Self {
             slabs: [

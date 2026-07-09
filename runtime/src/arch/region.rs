@@ -18,6 +18,15 @@ pub fn rw() -> Region {
     Region::new(data().start, bss().end).unwrap()
 }
 
+pub fn live() -> Region {
+    debug_assert!(text().start <= bss().end);
+    Region::new(text().start, bss().end).unwrap()
+}
+
+pub fn init() -> Region {
+    unsafe { Region::from_raw(&_init_start, &_init_end) }
+}
+
 pub fn text() -> Region {
     unsafe { Region::from_raw(&_text_start, &_text_end) }
 }

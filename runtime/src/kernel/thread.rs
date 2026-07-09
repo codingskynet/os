@@ -1,16 +1,12 @@
 use alloc::boxed::Box;
 use core::mem::{self, ManuallyDrop};
-use core::num::NonZeroUsize;
 use core::ptr;
 
 use crate::arch;
+use crate::arch::consts::STACK_SIZE;
 use crate::arch::switch::{_switch, _switch_to, SwitchContext};
 use crate::kernel::scheduler::SCHEDULER;
 use crate::mm::addr::Va;
-use crate::util::consts::K;
-
-// Must match STACK_SHIFT in boot's RISC-V assembly entry.
-pub const STACK_SIZE: NonZeroUsize = NonZeroUsize::new(32 * K).unwrap();
 
 pub fn spawn(entry: impl FnOnce() + Send + 'static) {
     SCHEDULER.push(Thread::new(entry));
@@ -49,24 +45,28 @@ pub enum ThreadState {
     Exited,
 }
 
-#[repr(C, align(32768))]
+#[repr(C, align(16384))]
 pub struct Thread {
     state: ThreadState,
     context: SwitchContext,
     entry: Option<Box<dyn FnOnce() + Send>>,
-    stack_bottom: (),
 }
 
 impl Thread {
     pub fn new(entry: impl FnOnce() + Send + 'static) -> Box<Thread> {
         assert_eq!(mem::size_of::<Self>(), STACK_SIZE.get());
 
-        let mut thread = Box::new(Self {
-            state: ThreadState::Ready,
-            context: SwitchContext::default(),
-            entry: Some(Box::new(entry)),
-            stack_bottom: (),
-        });
+        // Avoid materializing the 16 KiB, 16 KiB-aligned thread object on the
+        // current stack before moving it into the heap allocation.
+        let mut thread = unsafe {
+            let mut thread = Box::<Self>::new_uninit();
+            let thread_ptr = thread.as_mut_ptr();
+            ptr::addr_of_mut!((*thread_ptr).state).write(ThreadState::Ready);
+            ptr::addr_of_mut!((*thread_ptr).context).write(SwitchContext::default());
+            ptr::addr_of_mut!((*thread_ptr).entry).write(Some(Box::new(entry)));
+            thread.assume_init()
+        };
+
         let stack_top = thread.stack_top();
         let thread_ptr = Va::from(&*thread);
         thread

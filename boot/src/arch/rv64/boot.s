@@ -27,10 +27,7 @@
  *  General-purpose instructions and pseudo-instructions
  *    li   rd, imm            (pseudo) load an immediate constant into rd.
  *    la   rd, symbol         (pseudo) load the address of symbol into rd.
- *    add  rd, rs1, rs2       (instr)  rd = rs1 + rs2.
  *    addi rd, rs, imm        (instr)  rd = rs + sign-extended imm.
- *    slli rd, rs, shamt      (instr)  rd = rs << shamt. On RV64, shamt is a
- *                            6-bit immediate.
  *    sd   rs, offset(base)   (instr)  store 64-bit rs at base + offset.
  *
  *  Branches and jumps
@@ -95,10 +92,6 @@
  *
  * ============================================================================ */
 
-# Must match runtime::kernel::thread::STACK_SIZE.
-.equ STACK_SHIFT,    15
-.equ STACK_SIZE,     (1 << STACK_SHIFT)
-
 # pmpcfg0 entry bits for PMP entry 0.
 #   bit 0      R = read permission
 #   bit 1      W = write permission
@@ -139,14 +132,6 @@
 .global _start
 
 _start:
-    # setup stacks per hart
-    csrr t0, mhartid                # read current hart id
-    slli t0, t0, STACK_SHIFT        # shift left the hart id by STACK_SIZE
-    la   sp, stacks + STACK_SIZE    # set the initial stack pointer
-                                    # to the end of the stack space
-    add  sp, sp, t0                 # move the current hart stack pointer
-                                    # to its place in the stack space
-
     # pass hart_id and DTB pointer to Rust according to the QEMU boot convention.
     #
     # QEMU's -bios none -kernel mode jumps to _start with:
@@ -161,14 +146,25 @@ _start:
     bnez a0, park                   # if we're not on the hart 0
                                     # we park the hart
 
-    # zero the bss section
-    la   t0, _bss_start
-    la   t1, _bss_end
+    # setup the boot stack used by hart 0 until Rust installs the runtime stack
+    la   sp, boot_stack_top
+
+    # zero the init bss range
+    la   t0, _init_bss_start
+    la   t1, _init_bss_end
 1:  bgeu t0, t1, 2f                 # if t0 >= t1, done
     sd   zero, 0(t0)                # store 8 zero bytes at t0
     addi t0, t0, 8                  # advance by 8 bytes
     j    1b                         # loop
 2:
+    # zero the regular bss section
+    la   t0, _bss_start
+    la   t1, _bss_end
+3:  bgeu t0, t1, 4f                 # if t0 >= t1, done
+    sd   zero, 0(t0)                # store 8 zero bytes at t0
+    addi t0, t0, 8                  # advance by 8 bytes
+    j    3b                         # loop
+4:
     j    enter_supervisor_mode      # hart 0 enters S-mode before Rust
 
 /* ---------------------------------------------------------------------------
@@ -240,8 +236,3 @@ supervisor_entry:
 park:
     wfi
     j park
-
-.section .bss.stack, "aw", @nobits
-.balign 16
-stacks:
-    .skip STACK_SIZE * 8            # allocate space for the harts stacks

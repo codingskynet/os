@@ -3,6 +3,7 @@ pub use slab::*;
 pub use uninit::*;
 
 mod buddy;
+mod reserved;
 mod slab;
 mod uninit;
 
@@ -15,6 +16,7 @@ use arrayvec::ArrayVec;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::mm::addr::Pa;
+use crate::mm::page_meta::reserved::Reserved;
 use crate::mm::region::Region;
 
 pub struct PageMetaMap {
@@ -154,6 +156,23 @@ impl PageMeta {
     pub unsafe fn owned_buddy(&self) -> OwnedPageMeta<Buddy> {
         if !matches!(**self, PageMetaState::Buddy(_)) {
             panic!("it is not buddy")
+        }
+
+        OwnedPageMeta {
+            page_meta: NonNull::from(self),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Recreate a linear reserved-page ownership token from page metadata.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure no other ownership token exists for this page
+    /// and that allocator locking excludes concurrent state transitions.
+    pub unsafe fn owned_reserved(&self) -> OwnedPageMeta<Reserved> {
+        if !matches!(**self, PageMetaState::Reserved) {
+            panic!("it is not reserved")
         }
 
         OwnedPageMeta {
