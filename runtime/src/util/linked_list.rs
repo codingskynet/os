@@ -1,3 +1,9 @@
+//! Intrusive doubly linked list primitives.
+//!
+//! The list stores links inside the pointed-to element. It avoids allocation and
+//! is used for metadata structures whose addresses remain stable.
+
+/// Pointer type for an element that embeds a [`Node`].
 pub trait Pointer: Clone + Copy + PartialEq + Eq {
     /// Returns a pointer to the [`Node`] links embedded in the pointed-to
     /// element.
@@ -32,6 +38,7 @@ pub trait Pointer: Clone + Copy + PartialEq + Eq {
     }
 }
 
+/// Link fields embedded in an intrusive list element.
 pub struct Node<P: Pointer> {
     prev: Option<P>,
     next: Option<P>,

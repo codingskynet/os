@@ -1,3 +1,5 @@
+//! Monotonic kernel clock derived from the platform timebase.
+
 use core::num::NonZeroU64;
 
 use crate::arch;
@@ -24,6 +26,7 @@ pub fn clock_millis() -> u64 {
     ns / (NANOS_PER_SEC / MILLIS_PER_SEC)
 }
 
+/// Timebase calibration captured during boot.
 pub struct ClockMeta {
     pub base: u64,
     pub freq: NonZeroU64,

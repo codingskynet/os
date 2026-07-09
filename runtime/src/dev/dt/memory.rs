@@ -1,8 +1,21 @@
+//! Helpers for extracting RAM ranges from a device tree.
+//!
+//! Reference: [Devicetree Specification v0.4], section 3.4, "`/memory` Node",
+//! and section 2.3.6, "`reg`".
+//!
+//! [Devicetree Specification v0.4]:
+//!     https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf
+
 use core::num::NonZeroUsize;
 
 use crate::dev::dt::prop::reg::RegIter;
 use crate::dev::dt::{Fdt, FdtToken, FdtWalker};
 
+/// Iterator over usable memory ranges declared by `/memory*` nodes.
+///
+/// Ranges with a zero size are ignored. Address and size cells are decoded
+/// according to the parent node's `#address-cells` and `#size-cells` values,
+/// as required for standard `reg` properties.
 pub struct MemoryIter<'a> {
     walker: FdtWalker<'a>,
     reg_iter: Option<RegIter<'a>>,

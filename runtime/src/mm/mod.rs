@@ -1,3 +1,9 @@
+//! Runtime memory management.
+//!
+//! The memory subsystem owns physical page metadata, the buddy page allocator,
+//! slab allocators for small objects, and the global allocator entry point used
+//! by `alloc`.
+
 pub mod addr;
 pub mod buddy;
 pub mod page_meta;

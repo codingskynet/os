@@ -1,9 +1,24 @@
+//! Device-tree property value decoders.
+//!
+//! Values remain borrowed from the original DTB. Conversion helpers interpret
+//! common encodings without copying the property bytes.
+//!
+//! Reference: [Devicetree Specification v0.4], section 2.2.4, "Properties",
+//! and section 2.3, "Standard Properties".
+//!
+//! [Devicetree Specification v0.4]:
+//!     https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf
+
 use core::ffi::CStr;
 
 use crate::dev::dt::RegIter;
 
 pub mod reg;
 
+/// Raw borrowed bytes for a device-tree property value.
+///
+/// Device-tree properties are untyped at the token layer; callers choose the
+/// appropriate decoder based on the property name and node binding.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Value<'a>(&'a [u8]);
 

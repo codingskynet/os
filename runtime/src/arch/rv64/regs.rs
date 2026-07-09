@@ -1,3 +1,5 @@
+//! Register save layouts shared by trap and context-switch code.
+
 macro_rules! regs {
     (
         $(#[$meta:meta])*
@@ -14,6 +16,7 @@ macro_rules! regs {
 }
 
 regs! {
+    /// General-purpose registers saved on trap entry.
     #[derive(Default)]
     pub struct GeneralRegs {
         ra, sp, gp, tp,
@@ -24,6 +27,7 @@ regs! {
 }
 
 regs! {
+    /// Callee-saved registers preserved across kernel thread switches.
     #[derive(Default)]
     pub struct CalleeSavedRegs {
         s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,

@@ -1,3 +1,8 @@
+//! Core kernel services.
+//!
+//! This layer owns scheduling, kernel threads, console output, timekeeping, and
+//! synchronization primitives used by the rest of the runtime.
+
 pub mod clock;
 pub mod console;
 pub mod dt;

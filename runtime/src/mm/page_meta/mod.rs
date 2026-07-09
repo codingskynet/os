@@ -1,3 +1,79 @@
+//! Per-page metadata and ownership-state transitions.
+//!
+//! Every physical page has one [`PageMeta`] entry. Allocators move pages
+//! between states by consuming linear [`OwnedPageMeta`] tokens, which prevents
+//! the same page from being owned by two allocator data structures at once.
+//!
+//! Head-page state graph:
+//!
+//! ```text
+//! boot discovers RAM
+//!        |
+//!        v
+//! +--------+
+//! | Uninit |
+//! +--------+
+//!   |  |
+//!   |  +-- owned_uninit().consume_as_reserved() ---> +----------+
+//!   |                                                | Reserved |
+//!   |                                                +----------+
+//!   |                                                     |
+//!   |                                                     | owned_reserved().into_buddy()
+//!   |                                                     v
+//!   | &mut [PageMeta]::owned_buddy(order)            +-------+
+//!   +----------------------------------------------> | Buddy |
+//!                                                    +-------+
+//!                                                       | ^
+//!                                                       | |
+//!                                      into_slab(size)  | |  into_buddy()
+//!                                                       v |
+//!                                                    +------+
+//!                                                    | Slab |
+//!                                                    +------+
+//!
+//! Multi-page block transitions:
+//!
+//! split(order n):
+//!   [ Buddy head | BuddyReserved tail... ]
+//!        |
+//!        +--> [ Buddy head | tail... ] + [ Buddy head | tail... ]
+//!                                      ^
+//!                                      |
+//!                         one tail page is promoted to a Buddy head
+//!
+//! merge(order n):
+//!   [ Buddy head | tail... ] + [ Buddy head | tail... ]
+//!        |
+//!        +--> [ Buddy head | BuddyReserved tail... ]
+//!                                      ^
+//!                                      |
+//!                         the second Buddy head is demoted to a tail page
+//! ```
+//!
+//! `Buddy` and `Slab` are head-page states for a physical block. Every other
+//! page covered by that block is marked [`PageMetaState::BuddyReserved`], even
+//! while the head is in the `Slab` state. `BuddyReserved` is therefore not an
+//! independently ownable state; it changes only as part of splitting or merging
+//! a buddy block.
+//!
+//! Transition summary:
+//!
+//! - [`PageMeta::uninit`] creates metadata in [`PageMetaState::Uninit`].
+//! - [`OwnedPageMeta<Uninit>::consume_as_reserved`] marks boot-reserved pages.
+//! - `RefMutSliceOfPageMetaExt::owned_buddy` consumes a contiguous uninit slice,
+//!   stores [`PageMetaState::Buddy`] in the first page, and marks the remaining
+//!   pages [`PageMetaState::BuddyReserved`].
+//! - [`OwnedPageMeta<Reserved>::into_buddy`] releases a single reserved page
+//!   back to the buddy allocator.
+//! - [`OwnedPageMeta<Buddy>::split`] creates two smaller buddy heads; the new
+//!   right-hand head was previously a `BuddyReserved` tail page.
+//! - [`OwnedPageMeta<Buddy>::merge`] combines two buddy heads; the second head
+//!   becomes `BuddyReserved` and the first head covers the merged block.
+//! - [`OwnedPageMeta<Buddy>::into_slab`] turns a buddy head into a slab head
+//!   while preserving the buddy metadata needed to return the block later.
+//! - [`OwnedPageMeta<Slab>::into_buddy`] is valid only for an empty, unlinked
+//!   slab block and restores the saved buddy metadata.
+
 pub use buddy::*;
 pub use slab::*;
 pub use uninit::*;
@@ -19,6 +95,7 @@ use crate::mm::addr::Pa;
 use crate::mm::page_meta::reserved::Reserved;
 use crate::mm::region::Region;
 
+/// Collection of page-metadata sections for all discovered RAM ranges.
 pub struct PageMetaMap {
     sections: ArrayVec<PageMetaSection, 4>,
 }
@@ -59,6 +136,10 @@ impl PageMetaMap {
     }
 }
 
+/// Contiguous page-metadata array backing one physical memory region.
+///
+/// `offset` is the physical page-frame number represented by
+/// `page_meta_items[0]`.
 pub struct PageMetaSection {
     page_meta_items: &'static [PageMeta],
     offset: usize,
@@ -87,6 +168,11 @@ impl PageMetaSection {
     }
 }
 
+/// Metadata for one physical page frame.
+///
+/// The address is immutable after boot. The state is internally mutable so
+/// allocator-owned tokens can update it while global references to the metadata
+/// remain stable.
 pub struct PageMeta {
     addr: Pa,
     state: UnsafeCell<PageMetaState>,
@@ -131,7 +217,7 @@ impl PageMeta {
     pub fn region(&self) -> Region {
         match **self {
             PageMetaState::Uninit => Region::from_size(self.addr, PAGE_SIZE).unwrap(),
-            _ => todo!("Does it need?: {}", unsafe { &*self.state.get() }),
+            _ => todo!("Does it need?"),
         }
     }
 
@@ -213,21 +299,42 @@ pub impl &mut [PageMeta] {
     }
 }
 
-#[derive(derive_more::Display)]
-
+/// Current ownership state of a physical page.
+///
+/// Multi-page buddy and slab blocks use a head page with rich metadata and mark
+/// the remaining pages as `BuddyReserved`.
 pub enum PageMetaState {
-    #[display("uninit")]
+    /// Boot-created metadata that has not yet been handed to an allocator or
+    /// marked reserved.
     Uninit,
-    #[display("reserved")]
+
+    /// A page reserved during boot, for example because it overlaps the kernel
+    /// image, the DTB, or non-RAM padding around a memory section.
     Reserved,
-    #[display("buddy")]
+
+    /// Head page of a buddy block.
+    ///
+    /// The embedded [`BuddyPageMeta`] records the block's reserved tail pages
+    /// and optional free-list link.
     Buddy(BuddyPageMeta),
-    #[display("buddyreserved")]
+
+    /// Non-head page covered by a multi-page buddy or slab block.
+    ///
+    /// This state prevents tail pages from being independently owned while the
+    /// head page represents the whole block.
     BuddyReserved,
-    #[display("slab")]
+
+    /// Head page of a slab block borrowed from the buddy allocator.
+    ///
+    /// The embedded [`SlabPageMeta`] includes the original buddy metadata so an
+    /// empty slab block can become [`PageMetaState::Buddy`] again.
     Slab(SlabPageMeta),
 }
 
+/// Linear ownership token for a page in state `S`.
+///
+/// Holding this token means the caller is responsible for eventually consuming
+/// it into another state or returning it to the allocator that owns that state.
 pub struct OwnedPageMeta<S> {
     page_meta: NonNull<PageMeta>,
     _marker: PhantomData<S>,

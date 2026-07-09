@@ -1,3 +1,5 @@
+//! Optional smoke tests enabled by crate features.
+
 #[cfg(feature = "smoke-allocator")]
 pub mod allocator;
 

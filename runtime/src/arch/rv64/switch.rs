@@ -1,3 +1,9 @@
+//! RISC-V kernel-thread context switching.
+//!
+//! Switch contexts store callee-saved state plus the saved stack, return
+//! address, first argument, and interrupt-enable bit needed to suspend and
+//! resume kernel threads.
+
 use core::arch::naked_asm;
 use core::mem::offset_of;
 
@@ -6,6 +12,7 @@ use crate::arch::regs::CalleeSavedRegs;
 use crate::kernel::thread::Thread;
 use crate::mm::addr::Va;
 
+/// Saved execution context for one kernel thread.
 #[derive(Default)]
 #[repr(C)]
 pub struct SwitchContext {

@@ -1,3 +1,5 @@
+//! Page metadata for slab-owned blocks.
+
 use core::mem;
 use core::num::NonZeroUsize;
 use core::ops::{Deref, DerefMut};
@@ -7,8 +9,13 @@ use super::*;
 use crate::mm::addr::{Pa, Va};
 use crate::util::linked_list::{Node, Pointer};
 
+/// Marker type for pages owned by the slab allocator.
 pub enum Slab {}
 
+/// Metadata stored in the head page of a slab block.
+///
+/// `buddy_meta` remembers the original buddy block so the block can be returned
+/// to the buddy allocator when it becomes empty.
 pub struct SlabPageMeta {
     pub buddy_meta: BuddyPageMeta,
     pub size: NonZeroUsize,
@@ -68,11 +75,19 @@ impl OwnedPageMeta<Slab> {
     }
 }
 
+/// Shared handle to slab metadata while a slab block is linked in an allocator.
+///
+/// Multiple copies may exist while the allocator list is being manipulated; the
+/// allocator lock and [`SharedPageMeta::into_owned`] safety contract serialize
+/// conversion back into a linear owner.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SharedPageMeta {
     page_meta: NonNull<PageMeta>,
 }
 
+// SAFETY: this handle points at boot-allocated page metadata. Sending it to
+// another hart transfers access to the same slab metadata; allocator locking
+// remains responsible for serializing mutation.
 unsafe impl Send for SharedPageMeta {}
 
 impl Pointer for SharedPageMeta {

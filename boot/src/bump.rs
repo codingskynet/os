@@ -1,3 +1,9 @@
+//! Boot-time physical bump allocator.
+//!
+//! This allocator runs from `.init.*` code before the runtime allocator is
+//! ready. It records firmware RAM ranges, reserves the kernel image and DTB,
+//! and hands out aligned physical regions for page tables and page metadata.
+
 use core::mem::{self, MaybeUninit};
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
@@ -15,6 +21,7 @@ use runtime::{debug, printlnk};
 #[unsafe(link_section = ".init.bss")]
 pub static BUMP_ALLOCATOR: SpinLock<BumpAllocator> = SpinLock::new(BumpAllocator::empty());
 
+/// Minimal allocation interface available during boot.
 pub trait Alloc {
     fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Pa>;
 
@@ -66,6 +73,7 @@ pub trait Alloc {
     }
 }
 
+/// Allocator over all discovered physical memory ranges.
 pub struct BumpAllocator {
     memories: ArrayVec<Memory, 4>,
 }
@@ -125,6 +133,7 @@ impl BumpAllocator {
     }
 }
 
+/// One physical memory range plus sub-ranges already reserved from it.
 pub struct Memory {
     region: Region,
     reserved: RegionSet<8>,
@@ -198,6 +207,7 @@ impl Memory {
     }
 }
 
+/// Sorted, coalescing set of reserved regions.
 pub struct RegionSet<const N: usize> {
     regions: ArrayVec<Region, N>,
 }
@@ -288,6 +298,7 @@ impl<const N: usize> RegionSet<N> {
     }
 }
 
+/// Iterator over the free gaps in one [`Memory`] range.
 pub struct FreeRegionIterator<'a> {
     region: Region,
     cursor: Pa,

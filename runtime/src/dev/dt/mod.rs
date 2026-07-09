@@ -1,3 +1,15 @@
+//! Flattened Device Tree parsing.
+//!
+//! The parser is allocation-free and walks the structure block directly from
+//! the firmware-provided blob. Callers must create [`Fdt`] only from immutable,
+//! readable DTB memory; walkers then borrow slices from that original blob.
+//!
+//! Reference: [Devicetree Specification v0.4], chapter 5, "Flattened
+//! Devicetree (DTB) Format".
+//!
+//! [Devicetree Specification v0.4]:
+//!     https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf
+
 pub mod memory;
 pub mod prop;
 
@@ -23,7 +35,10 @@ unsafe fn be32(buf: *const u8, offset: isize) -> u32 {
     }
 }
 
-// https://github.com/devicetree-org/devicetree-specification/blob/main/source/chapter5-flattened-format.rst
+/// Raw header view for a Flattened Device Tree blob.
+///
+/// Field accessors read the big-endian header words in place. The layout is
+/// defined by Devicetree Specification v0.4, section 5.2, "Header".
 #[derive(Clone, Copy)]
 pub struct FdtHeader {
     ptr: *const u8,
@@ -65,7 +80,11 @@ impl FdtHeader {
     }
 }
 
-// TODO: Since it uses **raw pointer**, so unsafe. Need to split unsafe FDT(no allocation) and safe FDT(allocation)
+/// Borrowed view over a Flattened Device Tree blob.
+///
+/// `Fdt` stores raw pointers into firmware-provided memory and performs no
+/// allocation or copying. It is therefore cheap to clone, but its validity is
+/// tied to the safety contract of [`Fdt::new`].
 #[derive(Clone, Copy)]
 pub struct Fdt {
     ptr: *const u8,
@@ -102,15 +121,12 @@ impl Fdt {
         self.header.total_size() as usize
     }
 
-    /// Navigate to the node identified by an absolute device-tree path such as
+    /// Navigate to the node identified by a device-tree path such as
     /// `/soc/serial@10000000`.
     ///
-    /// Returns a walker positioned at that node, or [`None`] if the path cannot
-    /// be resolved.
-    ///
-    /// # Safety
-    ///
-    /// See [`Fdt::query`].
+    /// The returned walker is positioned at the matching node. If any path
+    /// component is missing, the walker is exhausted and property lookups will
+    /// return [`None`].
     pub fn lookup(&self, path: &str) -> FdtWalker<'_> {
         let mut walker = self.query();
 
@@ -126,11 +142,9 @@ impl Fdt {
 
     /// Start walking the FDT structure block from the root node.
     ///
-    /// # Safety
-    ///
-    /// This method relies on the safety contract of [`Fdt::new`]: the FDT
-    /// pointer must still refer to a readable, immutable blob whose structure
-    /// and strings blocks are within bounds.
+    /// This method relies on the safety contract of [`Fdt::new`]: the backing
+    /// blob must still be readable and immutable, and the structure and strings
+    /// blocks must still be within bounds.
     pub fn query(&self) -> FdtWalker<'_> {
         unsafe {
             let len = self.header.size_dt_struct() as usize;
@@ -160,6 +174,10 @@ impl Fdt {
     }
 }
 
+/// Streaming walker over a bounded FDT node range.
+///
+/// A walker starts at one node and stops when it leaves that node's subtree.
+/// Descending with [`FdtWalker::at`] narrows that range to the selected child.
 #[derive(Clone)]
 pub struct FdtWalker<'a> {
     stream: Stateful<&'a [u8], FdtWalkerState<'a>>,
@@ -201,6 +219,9 @@ impl<'a> FdtWalker<'a> {
         self
     }
 
+    /// Iterate over direct properties of the current node.
+    ///
+    /// Properties nested under child nodes are skipped.
     pub fn props(self) -> FdtPropWalker<'a> {
         FdtPropWalker(self)
     }
@@ -244,6 +265,12 @@ const FDT_PROP: u32 = 3;
 const FDT_NOP: u32 = 4;
 const FDT_END: u32 = 9;
 
+/// Token yielded while streaming the FDT structure block.
+///
+/// `Node` and `NodeEnd` delimit subtree boundaries. `Prop` contains the
+/// property name resolved through the strings block plus its raw value bytes.
+/// Token values follow Devicetree Specification v0.4, section 5.4,
+/// "Structure Block".
 #[derive(Debug, PartialEq, Eq)]
 pub enum FdtToken<'a> {
     Node(&'a str),
@@ -367,6 +394,7 @@ impl<'a> Iterator for FdtWalker<'a> {
     }
 }
 
+/// Iterator over direct properties of a single FDT node.
 pub struct FdtPropWalker<'a>(FdtWalker<'a>);
 
 impl<'a> Iterator for FdtPropWalker<'a> {
@@ -378,7 +406,12 @@ impl<'a> Iterator for FdtPropWalker<'a> {
             let item = self.0.next()?;
             match item {
                 FdtToken::Node(_) => depth += 1,
-                FdtToken::NodeEnd => depth -= 1,
+                FdtToken::NodeEnd => {
+                    if depth == 0 {
+                        return None;
+                    }
+                    depth -= 1;
+                }
                 FdtToken::Prop { name, value } if depth == 0 => return Some((name, value)),
                 _ => {}
             }
@@ -412,6 +445,16 @@ mod tests {
                     value: value.into_slice(),
                 }),
                 _ => None,
+            })
+            .collect()
+    }
+
+    fn collect_direct_props<'a>(walker: FdtWalker<'a>) -> Vec<Prop<'a>> {
+        walker
+            .props()
+            .map(|(name, value)| Prop {
+                name,
+                value: value.into_slice(),
             })
             .collect()
     }
@@ -469,6 +512,29 @@ mod tests {
                 name: "cpu",
                 value: &[0, 0, 0, 1],
             }]
+        );
+    }
+
+    #[test]
+    fn prop_walker_stops_at_current_node_end() {
+        let fdt = qemu_fdt();
+
+        assert_eq!(
+            collect_direct_props(fdt.query().at("chosen")).as_slice(),
+            &[
+                Prop {
+                    name: "stdout-path",
+                    value: b"/soc/serial@10000000\0",
+                },
+                Prop {
+                    name: "rng-seed",
+                    value: &[
+                        0xa0, 0xdf, 0x1d, 0xc8, 0x21, 0x8f, 0x10, 0x91, 0x3a, 0x38, 0xf7, 0xe2,
+                        0x43, 0x58, 0x0b, 0xbd, 0x1e, 0xfb, 0x0b, 0xf0, 0x33, 0x84, 0xe0, 0x5f,
+                        0x7c, 0x07, 0xae, 0xd3, 0x42, 0x2e, 0x13, 0x1d,
+                    ],
+                },
+            ]
         );
     }
 

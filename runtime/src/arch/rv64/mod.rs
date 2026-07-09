@@ -1,4 +1,8 @@
 //! RISC-V 64-bit architecture support.
+//!
+//! This module contains the supervisor-mode pieces required by the runtime:
+//! CSR wrappers, Sv39 paging, trap dispatch, timer interrupts, and kernel
+//! thread context switching.
 
 macro_rules! riscv_privileged_isa_version {
     () => {

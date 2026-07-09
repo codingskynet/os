@@ -1,7 +1,13 @@
+//! Interrupt masking guard used around critical sections.
+
 use core::marker::PhantomData;
 
 use crate::arch::{self};
 
+/// Disables local interrupts for the lifetime of the guard.
+///
+/// When dropped on the same hart, the guard restores the interrupt-enable state
+/// that was active when it was created.
 pub struct InterruptGuard {
     was_enabled: bool,
     // Stable Rust cannot write `impl !Send` for this guard directly. The guard

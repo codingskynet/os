@@ -1,3 +1,5 @@
+//! Runtime paging operations after the final kernel page table is active.
+
 use core::arch::asm;
 
 use crate::arch::consts::PAGE_SIZE;
@@ -22,6 +24,10 @@ fn active_root() -> &'static mut PageTable {
     unsafe { &mut *root.into_va().as_mut_ptr() }
 }
 
+/// Remove mappings for a page-aligned kernel image region.
+///
+/// This is used when `.init.*` memory has been reclaimed so stale virtual
+/// aliases cannot continue executing or reading it.
 pub fn unmap_kernel_region(region: Region) {
     assert_eq!(region.start.align_down(PAGE_SIZE), region.start);
     assert_eq!(region.end.align_down(PAGE_SIZE), region.end);

@@ -1,6 +1,6 @@
 //! Universal Asynchronous Receiver/Transmitter (UART) abstraction.
 //!
-//! Any concrete serial driver (NS16550, PL011, etc.) implements this interface and
-//! can be used interchangeably by the rest of the kernel.
+//! Concrete serial drivers expose small `fmt::Write` implementations that the
+//! console layer can install without knowing each device's register layout.
 
 pub mod ns16550;

@@ -1,3 +1,15 @@
+//! Decoder for the standard device-tree `reg` property.
+//!
+//! Devicetree Specification v0.4, section 2.3.6, defines `reg` as address and
+//! length pairs. The address width comes from the parent node's
+//! `#address-cells`; the length width comes from the parent node's
+//! `#size-cells`.
+//!
+//! Reference: [Devicetree Specification v0.4], section 2.3.6, "`reg`".
+//!
+//! [Devicetree Specification v0.4]:
+//!     https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf
+
 /// Parse a big-endian cell value of `bytes` width (1 or 2 cells = 4 or 8 bytes).
 ///
 /// Returns `u64` zero-extended.
@@ -17,7 +29,8 @@ fn read_cell_be(buf: &[u8], bytes: usize) -> Option<u64> {
 /// Iterator over `(address, size)` tuples decoded from a DTB `reg` property.
 ///
 /// `address_cells` and `size_cells` are inherited from the parent node's
-/// `#address-cells` and `#size-cells` properties (defaults: 2 and 1).
+/// `#address-cells` and `#size-cells` properties. The root defaults are 2
+/// address cells and 1 size cell.
 pub struct RegIter<'a> {
     data: &'a [u8],
     stride: usize,
@@ -39,7 +52,7 @@ impl<'a> RegIter<'a> {
 }
 
 impl<'a> Iterator for RegIter<'a> {
-    /// `(address, size)` — size is `None` when `#size-cells = 0`.
+    /// `(address, size)`; size is `None` when `#size-cells = 0`.
     type Item = (u64, Option<u64>);
 
     fn next(&mut self) -> Option<Self::Item> {

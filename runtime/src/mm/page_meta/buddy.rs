@@ -1,3 +1,5 @@
+//! Page metadata for buddy-owned blocks.
+
 use core::num::NonZeroUsize;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -9,7 +11,13 @@ use crate::mm::addr::Pa;
 use crate::mm::is_same_page_meta_section;
 use crate::util::linked_list::Node;
 
+/// Marker type for pages owned by the buddy allocator.
 pub enum Buddy {}
+
+/// Metadata stored in the head page of a buddy block.
+///
+/// `reserved` points at the remaining `2^order - 1` page metadata entries in
+/// the block. `next` links the block into a free list when it is not allocated.
 pub struct BuddyPageMeta {
     pub reserved: NonNull<[PageMeta]>,
     pub next: Option<OwnedPageMeta<Buddy>>,

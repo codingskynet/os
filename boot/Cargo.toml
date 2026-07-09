@@ -13,7 +13,7 @@ smoke-kernel-thread = ["runtime/smoke-kernel-thread"]
 workspace = true
 
 [[bin]]
-name = "kernel"
+name = "boot"
 path = "src/main.rs"
 test = false
 bench = false
