@@ -1,6 +1,6 @@
 //! Runtime paging operations after the final kernel page table is active.
 
-use core::arch::asm;
+use crate::asm;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::arch::page_table::{PageTable, SATP_MODE_SV39, vpn0, vpn1, vpn2};

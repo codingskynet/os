@@ -1,4 +1,4 @@
-use core::arch::asm;
+use crate::asm;
 
 use crate::debug;
 

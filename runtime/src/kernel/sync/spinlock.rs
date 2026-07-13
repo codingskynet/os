@@ -39,7 +39,9 @@ impl<T> SpinLock<T> {
     pub fn lock(&self) -> SpinLockGuard<'_, T> {
         let interrupt_guard = InterruptGuard::new();
         loop {
-            core::hint::spin_loop();
+            while self.flag.load(Ordering::Relaxed) {
+                core::hint::spin_loop();
+            }
 
             // [Ordering::Acquire] pairs with the Release in `drop`: after this swap observes an
             // unlocked state, reads and writes through the guard must see the

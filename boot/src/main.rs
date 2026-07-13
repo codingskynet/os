@@ -24,7 +24,7 @@ global_asm!(include_str!("arch/rv64/boot.s"));
 #[unsafe(link_section = ".init.text")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _start_rust(hart_id: usize, dtb_ptr: *const u8) -> ! {
-    unsafe { arch::paging::enable_mmu_and_jump(_after_mmu as *const () as usize, hart_id, dtb_ptr) }
+    unsafe { arch::paging::enable_mmu_and_jump(_after_mmu as *const u8 as usize, hart_id, dtb_ptr) }
 }
 
 #[unsafe(link_section = ".init.text")]

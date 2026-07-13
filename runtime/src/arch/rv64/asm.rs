@@ -3,7 +3,7 @@
 //! These functions keep inline assembly localized so higher-level runtime code
 //! can express intent through named operations.
 
-use core::arch::asm;
+use crate::asm;
 
 pub mod interrupt {
     use super::*;

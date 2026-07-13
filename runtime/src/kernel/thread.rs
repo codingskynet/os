@@ -1,16 +1,22 @@
 //! Cooperative kernel threads and context-switch handoff.
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch;
 use crate::fs::FsContext;
 use crate::kernel::scheduler::SCHEDULER;
+use crate::kernel::syscall;
 use crate::mm::addr::Va;
 
-pub fn spawn(entry: impl FnOnce() + Send + 'static) {
-    SCHEDULER.push(Thread::new(entry));
+pub fn spawn(entry: impl FnOnce() + Send + 'static) -> Arc<AtomicUsize> {
+    let thread = Thread::new(entry);
+    let exit_code = thread.exit_code().unwrap();
+    SCHEDULER.push(thread);
+    exit_code
 }
 
 pub fn yield_now() {
@@ -27,14 +33,6 @@ pub fn jump_to_idle() -> ! {
 
     idle.state = ThreadState::Running;
     unsafe { arch::switch::_switch_to(Box::into_raw(idle).as_ref().unwrap().context()) }
-}
-
-fn exit_current() -> ! {
-    Thread::with_current(|current| {
-        current.state = ThreadState::Exited;
-    });
-    SCHEDULER.run_next();
-    unreachable!("exited thread resumed after scheduler switch")
 }
 
 /// Scheduler-visible lifecycle state for a kernel thread.
@@ -58,6 +56,7 @@ pub struct Thread {
     switch: arch::switch::SwitchContext,
     fs: Option<FsContext>,
     entry: Option<Box<dyn FnOnce() + Send>>,
+    exit: Option<Arc<AtomicUsize>>, // todo: split RW?
 }
 
 impl Thread {
@@ -73,6 +72,8 @@ impl Thread {
             ptr::addr_of_mut!((*thread_ptr).switch).write(arch::switch::SwitchContext::default());
             ptr::addr_of_mut!((*thread_ptr).fs).write(None);
             ptr::addr_of_mut!((*thread_ptr).entry).write(Some(Box::new(entry)));
+            ptr::addr_of_mut!((*thread_ptr).exit)
+                .write(Some(Arc::new(AtomicUsize::new(usize::MAX))));
             thread.assume_init()
         };
 
@@ -91,6 +92,15 @@ impl Thread {
     pub fn stack_top(&self) -> Va {
         let s = Va::from(self);
         s.checked_offset(mem::size_of::<Self>()).unwrap()
+    }
+
+    pub fn exit_code(&self) -> Option<Arc<AtomicUsize>> {
+        self.exit.clone()
+    }
+
+    pub fn set_exit(&mut self, code: usize) {
+        self.state = ThreadState::Exited;
+        self.exit.take().unwrap().store(code, Ordering::Relaxed);
     }
 
     pub fn with_current(f: impl FnOnce(&mut Thread)) {
@@ -120,7 +130,8 @@ impl Thread {
 
 pub extern "C" fn _kernel_thread_start(thread: &mut Thread) -> ! {
     thread.entry.take().unwrap()();
-    exit_current()
+
+    syscall::exit(0);
 }
 
 /// Requeue or destroy the thread that just stopped running after a context

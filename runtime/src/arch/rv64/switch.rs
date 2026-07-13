@@ -25,7 +25,7 @@ pub struct SwitchContext {
 
 impl SwitchContext {
     pub fn as_kernel_thread_trampoline(&mut self, sp: Va, entry: Va) {
-        self.ra = _kernel_thread_trampoline as *const () as usize;
+        self.ra = _kernel_thread_trampoline as *const u8 as usize;
         self.sp = sp.as_raw();
         self.a0 = entry.as_raw();
         self.sstatus = SSTATUS_SIE; // start from interrupt-enabled
@@ -35,61 +35,61 @@ impl SwitchContext {
 #[rustfmt::skip]
 macro_rules! restore_sie_from {
     ($reg:literal) => {
-        concat!(
-            "li t1, {sie}\n",
-            "and t0, ", $reg, ", t1\n",
-            "beqz t0, 1f\n",
-            "csrs sstatus, t1\n",
-            "j 2f\n",
-            "1:\n",
-            "csrc sstatus, t1\n",
-            "2:\n",
-        )
+        $crate::asm!(@asm_lines(
+            "li t1, {sie}",
+            ("and t0, ", $reg, ", t1"),
+            "beqz t0, 1f",
+            "csrs sstatus, t1",
+            "j 2f",
+            "1:",
+            "csrc sstatus, t1",
+            "2:",
+        ))
     };
 }
 
 #[rustfmt::skip]
 macro_rules! store_regs {
     ($base:literal) => {
-        concat!(
-            "sd ra, {ra}(", $base, ")\n",
-            "sd sp, {sp}(", $base, ")\n",
-            "sd s0, {s0}(", $base, ")\n",
-            "sd s1, {s1}(", $base, ")\n",
-            "sd s2, {s2}(", $base, ")\n",
-            "sd s3, {s3}(", $base, ")\n",
-            "sd s4, {s4}(", $base, ")\n",
-            "sd s5, {s5}(", $base, ")\n",
-            "sd s6, {s6}(", $base, ")\n",
-            "sd s7, {s7}(", $base, ")\n",
-            "sd s8, {s8}(", $base, ")\n",
-            "sd s9, {s9}(", $base, ")\n",
-            "sd s10, {s10}(", $base, ")\n",
-            "sd s11, {s11}(", $base, ")\n",
-        )
+        $crate::asm!(@asm_lines(
+            ("sd ra, {ra}(", $base, ")"),
+            ("sd sp, {sp}(", $base, ")"),
+            ("sd s0, {s0}(", $base, ")"),
+            ("sd s1, {s1}(", $base, ")"),
+            ("sd s2, {s2}(", $base, ")"),
+            ("sd s3, {s3}(", $base, ")"),
+            ("sd s4, {s4}(", $base, ")"),
+            ("sd s5, {s5}(", $base, ")"),
+            ("sd s6, {s6}(", $base, ")"),
+            ("sd s7, {s7}(", $base, ")"),
+            ("sd s8, {s8}(", $base, ")"),
+            ("sd s9, {s9}(", $base, ")"),
+            ("sd s10, {s10}(", $base, ")"),
+            ("sd s11, {s11}(", $base, ")"),
+        ))
     };
 }
 
 #[rustfmt::skip]
 macro_rules! restore_regs {
     ($base:literal) => {
-        concat!(
-            "ld ra, {ra}(", $base, ")\n",
-            "ld sp, {sp}(", $base, ")\n",
-            "ld s0, {s0}(", $base, ")\n",
-            "ld s1, {s1}(", $base, ")\n",
-            "ld s2, {s2}(", $base, ")\n",
-            "ld s3, {s3}(", $base, ")\n",
-            "ld s4, {s4}(", $base, ")\n",
-            "ld s5, {s5}(", $base, ")\n",
-            "ld s6, {s6}(", $base, ")\n",
-            "ld s7, {s7}(", $base, ")\n",
-            "ld s8, {s8}(", $base, ")\n",
-            "ld s9, {s9}(", $base, ")\n",
-            "ld s10, {s10}(", $base, ")\n",
-            "ld s11, {s11}(", $base, ")\n",
-            "ld a0, {a0}(", $base, ")\n",
-        )
+        $crate::asm!(@asm_lines(
+            ("ld ra, {ra}(", $base, ")"),
+            ("ld sp, {sp}(", $base, ")"),
+            ("ld s0, {s0}(", $base, ")"),
+            ("ld s1, {s1}(", $base, ")"),
+            ("ld s2, {s2}(", $base, ")"),
+            ("ld s3, {s3}(", $base, ")"),
+            ("ld s4, {s4}(", $base, ")"),
+            ("ld s5, {s5}(", $base, ")"),
+            ("ld s6, {s6}(", $base, ")"),
+            ("ld s7, {s7}(", $base, ")"),
+            ("ld s8, {s8}(", $base, ")"),
+            ("ld s9, {s9}(", $base, ")"),
+            ("ld s10, {s10}(", $base, ")"),
+            ("ld s11, {s11}(", $base, ")"),
+            ("ld a0, {a0}(", $base, ")"),
+        ))
     };
 }
 

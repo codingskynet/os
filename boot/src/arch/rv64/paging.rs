@@ -4,7 +4,7 @@
 //! low physical entry point to the high kernel virtual address. It later builds
 //! the final runtime page table from firmware memory information.
 
-use core::arch::asm;
+use runtime::asm;
 use core::mem::MaybeUninit;
 use core::num::NonZeroUsize;
 use core::ops::DerefMut;

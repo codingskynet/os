@@ -1,7 +1,7 @@
 //! RISC-V supervisor trap handling.
 //!
 //! Trap entry saves general-purpose registers plus the supervisor CSRs that
-//! describe why the CPU left normal execution:
+//! describe or manage leaving normal execution:
 //!
 //!   `sepc`
 //!      Supervisor exception program counter. Hardware writes the return PC
@@ -28,25 +28,41 @@
 //!      faults, it contains the faulting virtual address. For some other traps
 //!      it may contain an instruction value or be zero.
 //!
-//! These fields are part of `TrapFrame` rather than `GeneralRegs` because they
-//! are not architectural integer registers; they are control/status state saved
-//! by hardware on trap entry and consumed by `sret` on trap return.
+//!   `sscratch`
+//!      Supervisor scratch CSR. Software uses it as a stack-switch slot so
+//!      trap frames always live on a kernel stack. While S-mode runs it is 0
+//!      and `sp` is the live kernel stack; while U-mode runs it holds the
+//!      kernel stack pointer to resume on and `sp` is the user stack. On
+//!      U-mode trap entry the user `sp` moves into `TrapFrame.regs.sp` and
+//!      `sscratch` is cleared back to 0 so a nested S-mode trap can take the
+//!      normal kernel-stack path. Returning to U-mode writes the post-frame
+//!      kernel `sp` back into `sscratch` before restoring the saved user `sp`.
+//!
+//! `sepc`, `sstatus`, `scause`, and `stval` are part of `TrapFrame` rather than
+//! `GeneralRegs` because they are not architectural integer registers; they
+//! are control/status state saved by hardware on trap entry and consumed by
+//! `sret` on trap return. `sscratch` stays outside the frame and is maintained
+//! by the trap entry/return path around that stack switch.
 
-use core::arch::{asm, naked_asm};
+mod exception;
+
+use core::arch::naked_asm;
 use core::mem::{offset_of, size_of};
 
 use bitflags::bitflags;
 
 use super::regs::GeneralRegs;
-use crate::arch::page_fault::handle_page_fault;
 use crate::arch::timer::handle_timer;
+use crate::arch::trap::exception::{PageFaultReason, handle_exception};
 use crate::mm::addr::Va;
+use crate::{args_enum_from_usize, asm};
 
 pub fn init() {
     unsafe {
         asm!(
             "csrw stvec, {entry}",
-            entry = in(reg) _trap_entry as *const () as usize,
+            "csrw sscratch, zero",
+            entry = in(reg) _trap_entry as *const u8 as usize,
             options(nostack, preserves_flags),
         );
     }
@@ -56,77 +72,137 @@ pub fn init() {
 ///
 /// # Safety
 ///
-/// Hardware must enter this function through `stvec` with a valid supervisor
-/// stack pointer. It is naked because it saves the interrupted register state
-/// itself before calling Rust code.
+/// Hardware must enter this function through `stvec`. For S-mode traps the
+/// current `sp` must already be a valid kernel stack with `sscratch = 0`. For
+/// U-mode traps `sscratch` must hold the kernel stack pointer to switch onto.
+/// It is naked because it saves the interrupted register state itself before
+/// calling Rust code.
+///
+/// The trap handler must not set SIE in a U-mode frame's `sstatus` (hardware
+/// saves it as 0). The U-mode return path briefly parks the user sp in
+/// `sscratch` before the final swap; an interrupt taken in that window would
+/// mistake the user sp for a kernel stack.
 #[rustfmt::skip]
 #[unsafe(naked)]
 pub unsafe extern "C" fn _trap_entry() -> ! {
     // This is the first code executed after the CPU vectors to `stvec`.
     // Keep this function naked so Rust does not emit a prologue before the
     // interrupted context has been saved.
+    //
+    // `t0`/`t1` are scratch after their TrapFrame slots are filled, and on
+    // return they are restored only after the S/U epilogue no longer needs
+    // them as temporaries.
     macro_rules! trap_entry_asm {
-        ($($reg:ident),+ $(,)?) => {
+        (
+            scratch: [$($scratch:ident),+ $(,)?],
+            saved: [$($reg:ident),+ $(,)?] $(,)?
+        ) => {
             naked_asm!(
-                concat!(
-                    // Reserve a TrapFrame on the interrupted stack.
-                    "addi sp, sp, -{frame_size}\n",
+                $crate::asm!(@asm_lines(
+                    // Swap sp with sscratch.
+                    // U-mode: sp <- kernel stack, sscratch <- user sp
+                    // S-mode: sp <- 0,            sscratch <- kernel sp
+                    "csrrw sp, sscratch, sp",
+                    "bnez sp, 1f",
+                    // S-mode: put the kernel sp back and leave sscratch = 0.
+                    "csrrw sp, sscratch, sp",
+                    "1:",
+
+                    // Reserve a TrapFrame on the kernel stack.
+                    "addi sp, sp, -{frame_size}",
 
                     $(
                         // Save one general-purpose register into TrapFrame.regs.
-                        "sd ", stringify!($reg), ", {", stringify!($reg), "}(sp)\n",
+                        ("sd ", stringify!($reg), ", {", stringify!($reg), "}(sp)"),
+                    )+
+                    $(
+                        ("sd ", stringify!($scratch), ", {", stringify!($scratch), "}(sp)"),
                     )+
 
-                    // Reconstruct the original sp from before the frame allocation.
-                    "addi t0, sp, {frame_size}\n",
-                    // Save the original interrupted sp into TrapFrame.regs.sp.
-                    "sd t0, {saved_sp}(sp)\n",
+                    // Read the interrupted status bits recorded by hardware.
+                    "csrr t0, sstatus",
+                    // Save status so the handler can inspect or edit it.
+                    "sd t0, {sstatus}(sp)",
+                    // SPP distinguishes the interrupted privilege for sp save.
+                    "andi t1, t0, {spp}",
+                    "bnez t1, 2f",
+                    // U-mode: user sp is still parked in sscratch.
+                    "csrr t0, sscratch",
+                    "sd t0, {saved_sp}(sp)",
+                    // Clear sscratch so nested S-mode traps keep the contract.
+                    "csrw sscratch, zero",
+                    "j 3f",
+                    "2:",
+                    // S-mode: reconstruct the original kernel sp.
+                    "addi t0, sp, {frame_size}",
+                    "sd t0, {saved_sp}(sp)",
+                    "3:",
 
                     // Read the return PC recorded by hardware on trap entry.
-                    "csrr t0, sepc\n",
+                    "csrr t0, sepc",
                     // Save the return PC into TrapFrame.sepc.
-                    "sd t0, {sepc}(sp)\n",
-                    // Read the interrupted status bits recorded by hardware.
-                    "csrr t0, sstatus\n",
-                    // Save status so the handler can inspect or edit it.
-                    "sd t0, {sstatus}(sp)\n",
+                    "sd t0, {sepc}(sp)",
                     // Read the trap cause: interrupt bit plus cause code.
-                    "csrr t0, scause\n",
+                    "csrr t0, scause",
                     // Save the trap cause into TrapFrame.scause.
-                    "sd t0, {scause}(sp)\n",
+                    "sd t0, {scause}(sp)",
                     // Read the trap-specific value, such as a faulting address.
-                    "csrr t0, stval\n",
+                    "csrr t0, stval",
                     // Save that trap-specific value into TrapFrame.stval.
-                    "sd t0, {stval}(sp)\n",
+                    "sd t0, {stval}(sp)",
 
                     // Pass &mut TrapFrame as the first C ABI argument.
-                    "mv a0, sp\n",
+                    "mv a0, sp",
                     // Dispatch to Rust while the full interrupted context is saved.
-                    "call {handler}\n",
+                    "call {handler}",
 
                     // Reload the possibly edited return PC from the frame.
-                    "ld t0, {sepc}(sp)\n",
+                    "ld t0, {sepc}(sp)",
                     // Restore the return PC used by sret.
-                    "csrw sepc, t0\n",
+                    "csrw sepc, t0",
                     // Reload the possibly edited status from the frame.
-                    "ld t0, {sstatus}(sp)\n",
+                    "ld t0, {sstatus}(sp)",
                     // Restore the status used by sret.
-                    "csrw sstatus, t0\n",
+                    "csrw sstatus, t0",
+                    // Keep SPP in t1 while restoring the other saved registers.
+                    "andi t1, t0, {spp}",
 
                     $(
                         // Restore one general-purpose register from TrapFrame.regs.
-                        "ld ", stringify!($reg), ", {", stringify!($reg), "}(sp)\n",
+                        ("ld ", stringify!($reg), ", {", stringify!($reg), "}(sp)"),
                     )+
 
-                    // Restore the original sp last; after this, sp no longer points at TrapFrame.
-                    "ld sp, {saved_sp}(sp)\n",
-                    // Return from the trap to sepc with privilege/status from sstatus.
-                    "sret\n",
-                ),
+                    "bnez t1, 4f",
+                    // U-mode return: park user sp in sscratch, restore scratch
+                    // regs, then swap so sscratch holds the kernel sp again.
+                    // Safe only because the sstatus restored above has SIE=0
+                    // (see the SIE contract in the function doc): no interrupt
+                    // can hit while sscratch holds the user sp.
+                    "ld t0, {saved_sp}(sp)",
+                    "csrw sscratch, t0",
+                    $(
+                        ("ld ", stringify!($scratch), ", {", stringify!($scratch), "}(sp)"),
+                    )+
+                    "addi sp, sp, {frame_size}",
+                    "csrrw sp, sscratch, sp",
+                    "sret",
+
+                    "4:",
+                    // S-mode return: sscratch stays 0; restore scratch regs and sp.
+                    $(
+                        ("ld ", stringify!($scratch), ", {", stringify!($scratch), "}(sp)"),
+                    )+
+                    "ld sp, {saved_sp}(sp)",
+                    "sret",
+                )),
                 frame_size = const size_of::<TrapFrame>(),
                 saved_sp = const offset_of!(TrapFrame, regs.sp),
+                spp = const Sstatus::SPP.bits(),
                 $(
                     $reg = const offset_of!(TrapFrame, regs.$reg),
+                )+
+                $(
+                    $scratch = const offset_of!(TrapFrame, regs.$scratch),
                 )+
                 sepc = const offset_of!(TrapFrame, sepc),
                 sstatus = const offset_of!(TrapFrame, sstatus),
@@ -138,10 +214,13 @@ pub unsafe extern "C" fn _trap_entry() -> ! {
     }
 
     trap_entry_asm!(
-        ra, gp, tp,
-        a0, a1, a2, a3, a4, a5, a6, a7,
-        t0, t1, t2, t3, t4, t5, t6,
-        s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
+        scratch: [t0, t1],
+        saved: [
+            ra, gp, tp,
+            a0, a1, a2, a3, a4, a5, a6, a7,
+            t2, t3, t4, t5, t6,
+            s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
+        ],
     )
 }
 
@@ -157,7 +236,7 @@ pub struct TrapFrame {
 impl TrapFrame {
     pub fn cause(&self) -> TrapCause {
         match self.scause.is_interrupt() {
-            true => TrapCause::Interrupt(Interrupt::new(self.scause.code(), self.stval)),
+            true => TrapCause::Interrupt(Interrupt::new(self.scause.code())),
             false => TrapCause::Exception(Exception::new(self.scause.code(), self.stval)),
         }
     }
@@ -165,15 +244,7 @@ impl TrapFrame {
 
 extern "C" fn _trap_handler(frame: &mut TrapFrame) {
     match frame.cause() {
-        TrapCause::Exception(
-            exception @ (Exception::InstructionPageFault(_)
-            | Exception::LoadPageFault(_)
-            | Exception::StorePageFault(_)),
-        ) => handle_page_fault(frame, exception),
-        TrapCause::Exception(exception) => panic!(
-            "unhandled exception: {:?}, sepc={}, stval={:#x}",
-            exception, frame.sepc, frame.stval
-        ),
+        TrapCause::Exception(exception) => handle_exception(frame, exception),
         TrapCause::Interrupt(Interrupt::SupervisorTimer) => handle_timer(),
         TrapCause::Interrupt(interrupt) => panic!(
             "unhandled interrupt: {:?}, sepc={}, stval={:#x}",
@@ -248,51 +319,7 @@ pub enum TrapCause {
     Interrupt(Interrupt),
 }
 
-macro_rules! cause_enum {
-    (
-        $(#[$enum_meta:meta])*
-        $vis:vis enum $name:ident ($stval:ident) {
-            $(
-                $(#[$variant_meta:meta])*
-                $code:literal => $variant:ident $(($value_ty:ty $(= $value:expr)?))?,
-            )+
-        }
-    ) => {
-        $(#[$enum_meta])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        $vis enum $name {
-            $(
-                $(#[$variant_meta])*
-                $variant $(($value_ty))?,
-            )+
-            Unknown(usize),
-        }
-
-        impl $name {
-            fn new(code: usize, $stval: usize) -> Self {
-                let _ = $stval;
-                match code {
-                    $(
-                        $code => Self::$variant $((
-                            cause_enum!(@value $stval, $value_ty $(, $value)?)
-                        ))?,
-                    )+
-                    _ => Self::Unknown(code),
-                }
-            }
-        }
-    };
-
-    (@value $stval:ident, $value_ty:ty, $value:expr) => {
-        $value
-    };
-
-    (@value $stval:ident, $value_ty:ty) => {
-        <$value_ty>::new($stval)
-    };
-}
-
-cause_enum! {
+args_enum_from_usize! {
     #[doc = concat!(
         "Standard synchronous exception codes reported in `scause`.\n\n",
         "The numeric codes come from RISC-V Privileged ISA ",
@@ -320,13 +347,15 @@ cause_enum! {
         7 => StoreAccessFault(Va = Va::new(stval)),
         8 => EnvironmentCallFromUMode,
         9 => EnvironmentCallFromSMode,
-        12 => InstructionPageFault(Va = Va::new(stval)),
-        13 => LoadPageFault(Va = Va::new(stval)),
-        15 => StorePageFault(Va = Va::new(stval)),
+        PageFault(PageFaultReason) {
+            12 => PageFaultReason::Instruction(Va::new(stval)),
+            13 => PageFaultReason::LoadPage(Va::new(stval)),
+            15 => PageFaultReason::StorePage(Va::new(stval)),
+        },
     }
 }
 
-cause_enum! {
+args_enum_from_usize! {
     #[doc = concat!(
         "Standard supervisor-level interrupt codes reported in `scause`.\n\n",
         "The numeric codes come from RISC-V Privileged ISA ",
@@ -338,7 +367,7 @@ cause_enum! {
         "[`scause` register]: ",
         riscv_supervisor_doc_url!("#scause"),
     )]
-    pub enum Interrupt(stval) {
+    pub enum Interrupt() {
         1 => SupervisorSoftware,
         5 => SupervisorTimer,
         9 => SupervisorExternal,

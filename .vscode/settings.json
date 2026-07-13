@@ -4,6 +4,6 @@
     "rust-analyzer.check.command": "check",
     "rust-analyzer.cargo.targetDir": "target/rust-analyzer",
     "rust-analyzer.rustfmt.overrideCommand": [
-        "./scripts/rustfmt"
+        "${workspaceFolder}/scripts/rustfmt"
     ]
 }
