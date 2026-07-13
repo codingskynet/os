@@ -4,7 +4,6 @@
 //! low physical entry point to the high kernel virtual address. It later builds
 //! the final runtime page table from firmware memory information.
 
-use runtime::asm;
 use core::mem::MaybeUninit;
 use core::num::NonZeroUsize;
 use core::ops::DerefMut;
@@ -13,6 +12,7 @@ use core::ptr;
 use runtime::arch::consts::*;
 use runtime::arch::page_table::{PageTable, PteFlags, SATP_MODE_SV39, ppn, vpn0, vpn1, vpn2};
 use runtime::arch::region;
+use runtime::asm;
 use runtime::dev::dt::Fdt;
 use runtime::dev::dt::memory::MemoryIter;
 use runtime::dev::uart::ns16550::NS16550;
