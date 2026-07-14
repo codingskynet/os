@@ -4,10 +4,11 @@
 //! ready. It records firmware RAM ranges, reserves the kernel image and DTB,
 //! and hands out aligned physical regions for page tables and page metadata.
 
-use core::mem::{self, MaybeUninit};
+use core::alloc::{AllocError, Allocator, Layout};
+use core::cell::RefCell;
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
-use core::slice::{self, Iter};
+use core::slice::Iter;
 
 use arrayvec::ArrayVec;
 use runtime::arch::{self};
@@ -21,73 +22,27 @@ use runtime::{debug, printlnk};
 #[unsafe(link_section = ".init.bss")]
 pub static BUMP_ALLOCATOR: SpinLock<BumpAllocator> = SpinLock::new(BumpAllocator::empty());
 
-/// Minimal allocation interface available during boot.
-pub trait Alloc {
-    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Pa>;
-
-    #[unsafe(link_section = ".init.text")]
-    fn alloc_slice<T>(
-        &mut self,
-        len: usize,
-        init: impl Fn(usize) -> T,
-    ) -> Option<&'static mut [T]> {
-        let data = self.alloc_slice_uninit(len)?;
-
-        for (i, elem) in data[..].iter_mut().enumerate() {
-            elem.write(init(i));
-        }
-
-        Some(unsafe { mem::transmute::<&mut [core::mem::MaybeUninit<T>], &mut [T]>(data) })
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    fn alloc_uninit<T>(&mut self) -> Option<&'static mut MaybeUninit<T>> {
-        let Some(size) = NonZeroUsize::new(mem::size_of::<T>()) else {
-            return Some(unsafe { &mut *NonNull::dangling().as_ptr() });
-        };
-
-        let pa = self.alloc_raw(
-            size,
-            // Safety: align_of guarantees nonzero.
-            mem::align_of::<T>().try_into().unwrap(),
-        )?;
-        let ptr: *mut MaybeUninit<T> = pa.into_va().as_mut_ptr();
-
-        Some(unsafe { &mut *ptr })
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    fn alloc_slice_uninit<T>(&mut self, len: usize) -> Option<&'static mut [MaybeUninit<T>]> {
-        let Some(size) = NonZeroUsize::new(mem::size_of::<T>() * len) else {
-            return Some(unsafe { slice::from_raw_parts_mut(NonNull::dangling().as_ptr(), len) });
-        };
-
-        let pa = self.alloc_raw(
-            size,
-            // Safety: align_of guarantees nonzero.
-            mem::align_of::<T>().try_into().unwrap(),
-        )?;
-        let ptr: *mut MaybeUninit<T> = pa.into_va().as_mut_ptr();
-
-        Some(unsafe { slice::from_raw_parts_mut(ptr, len) })
-    }
-}
-
 /// Allocator over all discovered physical memory ranges.
 pub struct BumpAllocator {
-    memories: ArrayVec<Memory, 4>,
+    memories: RefCell<ArrayVec<Memory, 4>>,
 }
 
-impl Alloc for BumpAllocator {
+unsafe impl Allocator for BumpAllocator {
     #[unsafe(link_section = ".init.text")]
-    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Pa> {
-        for mem in self.memories.iter_mut() {
-            if let Some(pa) = mem.alloc_raw(size, align) {
-                return Some(pa);
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        for memory in self.memories.borrow().iter() {
+            if let Ok(allocation) = memory.allocate(layout) {
+                return Ok(allocation);
             }
         }
 
-        None
+        Err(AllocError)
+    }
+
+    #[unsafe(link_section = ".init.text")]
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
+        // Boot allocations live until the runtime allocator takes ownership of
+        // all remaining physical memory, so individual frees are unnecessary.
     }
 }
 
@@ -95,17 +50,18 @@ impl BumpAllocator {
     #[unsafe(link_section = ".init.text")]
     pub const fn empty() -> Self {
         Self {
-            memories: ArrayVec::new_const(),
+            memories: RefCell::new(ArrayVec::new_const()),
         }
     }
 
     #[unsafe(link_section = ".init.text")]
     pub fn init(&mut self, fdt: &Fdt) {
-        self.memories.clear();
+        let memories = self.memories.get_mut();
+        memories.clear();
         for (addr, size) in MemoryIter::new(fdt) {
-            let region = Region::from_size(Pa::new(addr as usize), size).unwrap();
+            let region = Region::from_size(Pa::new(addr as usize), size);
             debug!("bump: register memory {region:?}");
-            self.memories.push(Memory::new(region));
+            memories.push(Memory::new(region));
         }
 
         // TODO: add reserve-memory from FDT
@@ -118,7 +74,7 @@ impl BumpAllocator {
 
     #[unsafe(link_section = ".init.text")]
     fn reserve(&mut self, region: Region) {
-        for mem in self.memories.iter_mut() {
+        for mem in self.memories.get_mut().iter_mut() {
             if mem.reserve(region).is_ok() {
                 return;
             }
@@ -129,20 +85,30 @@ impl BumpAllocator {
 
     #[unsafe(link_section = ".init.text")]
     pub fn memories_mut(&mut self) -> &mut [Memory] {
-        &mut self.memories
+        self.memories.get_mut()
     }
 }
 
 /// One physical memory range plus sub-ranges already reserved from it.
 pub struct Memory {
     region: Region,
-    reserved: RegionSet<8>,
+    reserved: RefCell<RegionSet<8>>,
 }
 
-impl Alloc for Memory {
+unsafe impl Allocator for Memory {
     #[unsafe(link_section = ".init.text")]
-    fn alloc_raw(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Pa> {
-        self.alloc(size, align).map(|region| region.start)
+    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let size = NonZeroUsize::new(layout.size()).unwrap_or(NonZeroUsize::MIN);
+        let align = NonZeroUsize::new(layout.align()).unwrap();
+        let region = self.alloc(size, align).ok_or(AllocError)?;
+        let ptr = NonNull::new(region.start.into_va().as_mut_ptr()).ok_or(AllocError)?;
+
+        Ok(NonNull::slice_from_raw_parts(ptr, size.get()))
+    }
+
+    #[unsafe(link_section = ".init.text")]
+    unsafe fn deallocate(&self, _ptr: NonNull<u8>, _layout: Layout) {
+        // Bump allocations are reclaimed together after boot.
     }
 }
 
@@ -151,7 +117,7 @@ impl Memory {
     pub fn new(region: Region) -> Self {
         Self {
             region,
-            reserved: RegionSet::new(),
+            reserved: RefCell::new(RegionSet::new()),
         }
     }
 
@@ -161,34 +127,30 @@ impl Memory {
     }
 
     #[unsafe(link_section = ".init.text")]
-    pub fn reserved(&self) -> &[Region] {
-        self.reserved.as_slice()
+    pub fn reserved(&mut self) -> &[Region] {
+        self.reserved.get_mut().as_slice()
     }
 
     #[unsafe(link_section = ".init.text")]
     pub fn reserve(&mut self, region: Region) -> Result<(), Region> {
         if self.region.start <= region.start && region.end <= self.region.end {
-            self.reserved.alloc(region)
+            self.reserved.get_mut().alloc(region)
         } else {
             Err(region)
         }
     }
 
     #[unsafe(link_section = ".init.text")]
-    pub fn alloc(&mut self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Region> {
-        let mut allocation = None;
-        for free in self.free_iter() {
-            let region = Region::from_size(free.start.align_up(align), size).unwrap();
-            if region.end > free.end {
-                continue;
-            }
-            if self.reserved.is_allocable(region) {
-                allocation = Some(region);
-                break;
-            }
-        }
+    pub fn alloc(&self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Region> {
+        let allocation = {
+            let reserved = self.reserved.borrow();
+            self.free_iter(&reserved).find_map(|free| {
+                let region = Region::from_size(free.start.align_up(align), size);
+                (region.end <= free.end && reserved.is_allocable(region)).then_some(region)
+            })
+        };
         if let Some(allocation) = allocation
-            && self.reserve(allocation).is_ok()
+            && self.reserved.borrow_mut().alloc(allocation).is_ok()
         {
             Some(allocation)
         } else {
@@ -197,11 +159,11 @@ impl Memory {
     }
 
     #[unsafe(link_section = ".init.text")]
-    fn free_iter(&self) -> FreeRegionIterator<'_> {
+    fn free_iter<'a>(&self, reserved: &'a RegionSet<8>) -> FreeRegionIterator<'a> {
         FreeRegionIterator {
             region: self.region,
             cursor: self.region.start,
-            reserved: self.reserved.iter(),
+            reserved: reserved.iter(),
             is_end: false,
         }
     }

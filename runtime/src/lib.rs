@@ -4,7 +4,9 @@
 //! initialization has finished.
 
 #![no_std]
+#![feature(allocator_api)]
 #![allow(clippy::forget_non_drop)]
+#![allow(unused)]
 
 extern crate alloc;
 

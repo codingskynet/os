@@ -150,17 +150,17 @@ impl SlabAllocator {
             .into_slab(self.slab_size);
 
         let start = owned.addr().into_va();
-        let end = start.checked_offset(self.block_size.get()).unwrap();
+        let end = start.offset(self.block_size.get());
 
         owned.used = 0;
         owned.free = Some(start);
 
         let mut node = start;
-        let mut next = node.checked_offset(self.slab_size.get()).unwrap();
+        let mut next = node.offset(self.slab_size.get());
         while next < end {
             unsafe { node.as_mut_ptr::<Option<Va>>().write(Some(next)) };
             node = next;
-            next = node.checked_offset(self.slab_size.get()).unwrap();
+            next = node.offset(self.slab_size.get());
         }
         unsafe { node.as_mut_ptr::<Option<Va>>().write(None) };
 

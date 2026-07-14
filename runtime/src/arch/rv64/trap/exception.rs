@@ -44,7 +44,7 @@ fn handle_page_fault(frame: &mut TrapFrame, reason: PageFaultReason) {
     #[cfg(feature = "smoke-page-fault")]
     {
         if fault_addr == crate::debug::smoke::page_fault::PAGE_FAULT_SMOKE_ADDR {
-            frame.sepc = frame.sepc.checked_offset(4).unwrap();
+            frame.sepc = frame.sepc.offset(4usize);
             return;
         }
     }
@@ -65,5 +65,5 @@ fn handle_ecall_from_umode(frame: &mut TrapFrame) {
             );
         }
     }
-    // frame.sepc = frame.sepc.checked_offset(4).unwrap();
+    // frame.sepc = frame.sepc.offset(4).unwrap();
 }

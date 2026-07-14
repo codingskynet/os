@@ -1,5 +1,7 @@
+pub use context::FsContext;
 pub use file::{File, Fnode};
 
+mod context;
 mod file;
 mod tarfs;
 
@@ -38,25 +40,8 @@ pub fn init() {
     *guard = Some(map);
 }
 
-pub fn open(path: &str) -> Result<File> {
-    let guard = MOUNTS.lock();
-    let mounts = guard.as_ref().ok_or(Error::NotFound)?;
-    let root = mounts
-        .get(&Path::from_str("/").unwrap())
-        .ok_or(Error::NotFound)?;
-
-    root.open(&Path::from_str(path).unwrap())
-}
-
 trait Fs: Send {
     fn open(&self, path: &Path) -> Result<File>;
-}
-
-#[allow(unused)]
-#[derive(Debug, Default)]
-pub struct FsContext {
-    root: Path,
-    cwd: Path,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash)]
@@ -74,3 +59,16 @@ impl FromStr for Path {
         ))
     }
 }
+
+pub fn open(path: &str) -> Result<File> {
+    let guard = MOUNTS.lock();
+    let mounts = guard.as_ref().ok_or(Error::NotFound)?;
+    let root = mounts
+        .get(&Path::from_str("/").unwrap())
+        .ok_or(Error::NotFound)?;
+
+    root.open(&Path::from_str(path).unwrap())
+}
+
+// pub fn kernel_exec(path: &str) -> Result<Infallible> {
+// }

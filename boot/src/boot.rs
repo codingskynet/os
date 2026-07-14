@@ -15,7 +15,7 @@ use runtime::mm::{BUDDY, PAGE_META_MAP};
 use runtime::printlnk;
 
 use crate::arch;
-use crate::bump::{Alloc, BUMP_ALLOCATOR, BumpAllocator};
+use crate::bump::{BUMP_ALLOCATOR, BumpAllocator};
 
 /// Information passed from architecture-specific boot code to common boot.
 #[allow(unused)]
@@ -56,14 +56,10 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
 
             console::install_from_fdt(fdt).expect("failed to install console");
 
-            let mut allocator = BUMP_ALLOCATOR.lock();
-            allocator.init(fdt);
-            arch::paging::init_page_table(fdt, || {
-                allocator
-                    .alloc_uninit()
-                    .expect("failed to allocate PageTable")
-            });
-            init_page_metadata(&mut token, &mut allocator);
+            let mut alloc = BUMP_ALLOCATOR.lock();
+            alloc.init(fdt);
+            unsafe { arch::paging::init_page_table(fdt, &*alloc) };
+            init_page_metadata(&mut token, &mut alloc);
         }
     }
 
@@ -75,16 +71,23 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
 
 #[unsafe(link_section = ".init.text")]
 fn init_page_metadata(token: &mut FreezableToken, allocator: &mut BumpAllocator) {
+    extern crate alloc;
+    use alloc::boxed::Box;
+
     for memory in allocator.memories_mut() {
         let memory_region = memory.region();
         let offset = memory_region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
         let end = memory_region.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
         let len = end - offset;
-        let page_meta_items = memory
-            .alloc_slice(len, |i| {
-                PageMeta::uninit(Pa::new((offset + i) * PAGE_SIZE.get()))
-            })
-            .expect("failed to allocate page metadata");
+        let page_meta_items = unsafe {
+            let mut items = Box::<[PageMeta], _>::new_uninit_slice_in(len, &*memory);
+            for (i, page_meta) in items.iter_mut().enumerate() {
+                page_meta.write(PageMeta::uninit(Pa::new((offset + i) * PAGE_SIZE.get())));
+            }
+            let items = items.assume_init();
+            let (page_meta_items, _) = Box::into_raw_with_allocator(items); // never deallocate
+            &mut *page_meta_items
+        };
 
         // reserve outside RAM region
         for page_meta in &mut *page_meta_items {

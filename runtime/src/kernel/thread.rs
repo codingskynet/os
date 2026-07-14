@@ -10,6 +10,7 @@ use crate::arch;
 use crate::fs::FsContext;
 use crate::kernel::scheduler::SCHEDULER;
 use crate::kernel::syscall;
+use crate::mm::MmContext;
 use crate::mm::addr::Va;
 
 pub fn spawn(entry: impl FnOnce() + Send + 'static) -> Arc<AtomicUsize> {
@@ -32,7 +33,14 @@ pub fn jump_to_idle() -> ! {
     });
 
     idle.state = ThreadState::Running;
-    unsafe { arch::switch::_switch_to(Box::into_raw(idle).as_ref().unwrap().context()) }
+    let idle = Box::into_raw(idle);
+    // SAFETY: `idle` is intentionally leaked and therefore keeps its page-table
+    // root alive. Every kernel mapping needed to finish the direct switch is
+    // shared with the currently active address space.
+    unsafe {
+        (*idle).mm.activate();
+        arch::switch::_switch_to((*idle).context())
+    }
 }
 
 /// Scheduler-visible lifecycle state for a kernel thread.
@@ -55,8 +63,9 @@ pub struct Thread {
     state: ThreadState,
     switch: arch::switch::SwitchContext,
     fs: Option<FsContext>,
+    mm: MmContext,
     entry: Option<Box<dyn FnOnce() + Send>>,
-    exit: Option<Arc<AtomicUsize>>, // todo: split RW?
+    exit_code: Option<Arc<AtomicUsize>>, // todo: split RW?
 }
 
 impl Thread {
@@ -71,8 +80,9 @@ impl Thread {
             ptr::addr_of_mut!((*thread_ptr).state).write(ThreadState::Ready);
             ptr::addr_of_mut!((*thread_ptr).switch).write(arch::switch::SwitchContext::default());
             ptr::addr_of_mut!((*thread_ptr).fs).write(None);
+            ptr::addr_of_mut!((*thread_ptr).mm).write(MmContext::new());
             ptr::addr_of_mut!((*thread_ptr).entry).write(Some(Box::new(entry)));
-            ptr::addr_of_mut!((*thread_ptr).exit)
+            ptr::addr_of_mut!((*thread_ptr).exit_code)
                 .write(Some(Arc::new(AtomicUsize::new(usize::MAX))));
             thread.assume_init()
         };
@@ -91,16 +101,19 @@ impl Thread {
 
     pub fn stack_top(&self) -> Va {
         let s = Va::from(self);
-        s.checked_offset(mem::size_of::<Self>()).unwrap()
+        s.offset(mem::size_of::<Self>())
     }
 
     pub fn exit_code(&self) -> Option<Arc<AtomicUsize>> {
-        self.exit.clone()
+        self.exit_code.clone()
     }
 
     pub fn set_exit(&mut self, code: usize) {
         self.state = ThreadState::Exited;
-        self.exit.take().unwrap().store(code, Ordering::Relaxed);
+        self.exit_code
+            .take()
+            .unwrap()
+            .store(code, Ordering::Relaxed);
     }
 
     pub fn with_current(f: impl FnOnce(&mut Thread)) {
@@ -130,7 +143,6 @@ impl Thread {
 
 pub extern "C" fn _kernel_thread_start(thread: &mut Thread) -> ! {
     thread.entry.take().unwrap()();
-
     syscall::exit(0);
 }
 
@@ -149,6 +161,14 @@ pub unsafe extern "C" fn _after_switch(prev: *mut Thread) {
     // ready queue. Rebuilding a `Box` is used only to either requeue that
     // allocation or destroy it when the thread has exited.
     unsafe {
+        Thread::with_current(|current| {
+            // SAFETY: `_switch` has restored `current`'s stack while retaining the
+            // thread allocation that owns its memory context. Kernel mappings are
+            // shared across contexts, and the switch epilogue keeps interrupts
+            // disabled until this function returns.
+            current.mm.activate();
+        });
+
         let prev = &mut *prev;
         match prev.state {
             ThreadState::Ready => unreachable!("previous thread was ready during after_switch"),

@@ -216,7 +216,7 @@ impl PageMeta {
 
     pub fn region(&self) -> Region {
         match **self {
-            PageMetaState::Uninit => Region::from_size(self.addr, PAGE_SIZE).unwrap(),
+            PageMetaState::Uninit => Region::from_size(self.addr, PAGE_SIZE),
             _ => todo!("Does it need?"),
         }
     }

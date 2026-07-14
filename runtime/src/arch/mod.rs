@@ -5,6 +5,7 @@
 //! architecture-agnostic.
 
 pub mod interrupt;
+pub mod paging;
 pub mod region;
 
 #[cfg(target_arch = "riscv64")]

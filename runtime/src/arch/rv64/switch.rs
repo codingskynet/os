@@ -132,8 +132,8 @@ macro_rules! switch_context_naked_asm {
 /// must point to the switch context of a different live thread, and `prev` must
 /// be the `Thread` that owns `current`. Both thread allocations must remain
 /// valid until their saved contexts are resumed or `after_switch` observes that
-/// one has exited. This routine restores `next`, runs `after_switch(prev)` on
-/// the new stack, then returns into `next`'s saved `ra`.
+/// one has exited. This routine restores `next`, activates its page table
+/// through `after_switch`, then returns into `next`'s saved `ra`.
 #[rustfmt::skip]
 #[unsafe(naked)]
 pub unsafe extern "C" fn _switch(

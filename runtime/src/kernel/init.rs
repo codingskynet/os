@@ -13,7 +13,7 @@ pub fn kernel_init() -> ! {
         #[cfg(debug_assertions)]
         crate::debug::smoke();
 
-        printlnk!("hello, kernel thread!");
+        // fs::kernel_exec("/bin/just_return").expect("failed to run kernel exec");
 
         loop {
             core::hint::spin_loop();

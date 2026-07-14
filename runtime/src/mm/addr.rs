@@ -62,8 +62,12 @@ impl Pa {
         Pa(self.0 & (!mask))
     }
 
-    pub fn checked_offset(&self, offset: usize) -> Option<Self> {
-        Some(Self(self.0.checked_add(offset)?))
+    pub fn offset(&self, offset: impl Into<usize>) -> Self {
+        Self(
+            self.0
+                .checked_add(offset.into())
+                .expect("overflow physical address"),
+        )
     }
 
     pub const fn into_va(self) -> Va {
@@ -121,8 +125,12 @@ impl Va {
         Self(addr)
     }
 
-    pub fn checked_offset(&self, offset: usize) -> Option<Self> {
-        Some(Self(self.0.checked_add(offset)?))
+    pub fn offset(&self, offset: impl Into<usize>) -> Self {
+        Self(
+            self.0
+                .checked_add(offset.into())
+                .expect("overflow virtual address"),
+        )
     }
 
     pub fn into_pa(self) -> Pa {

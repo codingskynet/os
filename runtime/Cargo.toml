@@ -22,6 +22,7 @@ bitflags.workspace = true
 crossbeam-utils.workspace = true
 derive_more.workspace = true
 either.workspace = true
+elf.workspace = true
 extend.workspace = true
 hashbrown.workspace = true
 tar-no-std.workspace = true

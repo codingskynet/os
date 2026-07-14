@@ -1,4 +1,5 @@
 #![allow(clippy::identity_op)]
+#![feature(allocator_api)]
 #![no_main]
 #![no_std]
 

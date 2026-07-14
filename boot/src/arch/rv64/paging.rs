@@ -4,14 +4,16 @@
 //! low physical entry point to the high kernel virtual address. It later builds
 //! the final runtime page table from firmware memory information.
 
+use core::alloc::Allocator;
 use core::mem::MaybeUninit;
 use core::num::NonZeroUsize;
 use core::ops::DerefMut;
 use core::ptr;
 
 use runtime::arch::consts::*;
-use runtime::arch::page_table::{PageTable, PteFlags, SATP_MODE_SV39, ppn, vpn0, vpn1, vpn2};
-use runtime::arch::region;
+use runtime::arch::page_table::{PageTable, PteFlags, vpn0, vpn1, vpn2};
+use runtime::arch::paging::PageTableRoot;
+use runtime::arch::{asm, region};
 use runtime::asm;
 use runtime::dev::dt::Fdt;
 use runtime::dev::dt::memory::MemoryIter;
@@ -58,7 +60,7 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
         // create direct map for physical RAM section(QEMU: 0x8000_0000 ~)
         {
             for (addr, size) in regs {
-                let region = Region::from_size(Pa::new(addr as usize), size).unwrap();
+                let region = Region::from_size(Pa::new(addr as usize), size);
                 let mut pa = region.start.align_down(L2_PAGE_SIZE);
                 while pa < region.end {
                     // identical mapping
@@ -71,7 +73,7 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
                         .entry(vpn2(pa.into_va()))
                         .mut_address(pa)
                         .mut_flags(flag);
-                    pa = pa.checked_offset(L2_PAGE_SIZE.get()).unwrap();
+                    pa = pa.offset(L2_PAGE_SIZE);
                 }
             }
         }
@@ -83,19 +85,15 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
                 .mut_address(Pa::new(kernel_l1 as *mut _ as usize))
                 .mut_flags(PteFlags::V);
 
-            let mut va = Va::new(&raw const _kernel_start as usize)
-                .checked_offset(KERNEL_VMA_OFFSET)
-                .unwrap();
+            let mut va = Va::new(&raw const _kernel_start as usize).offset(KERNEL_VMA_OFFSET);
             assert!(va == KERNEL_VMA_BASE);
-            let end = Va::new((&raw const _kernel_end) as usize)
-                .checked_offset(KERNEL_VMA_OFFSET)
-                .unwrap();
+            let end = Va::new((&raw const _kernel_end) as usize).offset(KERNEL_VMA_OFFSET);
             while va < end {
                 (*kernel_l1)
                     .entry(vpn1(va))
                     .mut_address(va.into_pa())
                     .mut_flags(flag);
-                va = va.checked_offset(L1_PAGE_SIZE.get()).unwrap();
+                va = va.offset(L1_PAGE_SIZE);
             }
         }
 
@@ -113,10 +111,10 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
             );
         }
 
-        let satp = SATP_MODE_SV39 | ppn(Pa::new(root as *mut _ as usize));
-        asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
-        asm!("csrw satp, {}", in(reg) satp, options(nostack, preserves_flags));
-        asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
+        // SAFETY: the temporary tables are static, fully initialized, and map
+        // both the current low execution state and the high kernel entry used
+        // immediately below. Interrupts are not enabled during early boot.
+        asm::page_table::activate_from_pa(Pa::new(root as *mut _ as usize));
 
         let entry = entry.checked_add(KERNEL_VMA_OFFSET).expect("invalid entry");
 
@@ -137,27 +135,31 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
 }
 
 #[unsafe(link_section = ".init.text")]
-pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>) {
+/// Build and activate the final kernel page table.
+///
+/// # Safety
+///
+/// The allocator must keep every returned allocation valid while this page
+/// table is active. It must also return uniquely owned allocations.
+pub unsafe fn init_page_table(fdt: &Fdt, alloc: &impl Allocator) {
     #[unsafe(link_section = ".init.text")]
-    fn map(
-        l2: &mut PageTable,
-        va: Va,
-        mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>,
-        flags: PteFlags,
-    ) {
+    fn map<A: Allocator + Clone>(root: &mut PageTableRoot<A>, va: Va, flags: PteFlags) {
         let flags = flags | PteFlags::V | PteFlags::A | PteFlags::D;
-        let l1 = l2.entry(vpn2(va)).or_insert_with(|| alloc());
-        let l0 = l1.entry(vpn1(va)).or_insert_with(|| alloc());
-        l0.entry(vpn0(va))
+
+        root.cursor()
+            .entry(vpn2(va))
+            .or_insert()
+            .entry(vpn1(va))
+            .or_insert()
+            .entry(vpn0(va))
             .mut_address(va.into_pa())
             .mut_flags(flags);
     }
 
     #[unsafe(link_section = ".init.text")]
-    fn map_region(
-        l2: &mut PageTable,
+    fn map_region<A: Allocator + Clone>(
+        root: &mut PageTableRoot<A>,
         region: Region,
-        mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>,
         to_va: impl Fn(Pa) -> Va,
         flags: PteFlags,
     ) {
@@ -168,17 +170,13 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
         let mut pa = region.start.align_down(PAGE_SIZE);
         let end = region.end.align_up(PAGE_SIZE);
         while pa < end {
-            map(l2, to_va(pa), &mut alloc, flags);
-            pa = pa.checked_offset(PAGE_SIZE.get()).unwrap();
+            map(root, to_va(pa), flags);
+            pa = pa.offset(PAGE_SIZE);
         }
     }
 
     #[unsafe(link_section = ".init.text")]
-    fn map_physical_memories(
-        fdt: &Fdt,
-        mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>,
-        root: &mut PageTable,
-    ) {
+    fn map_physical_memories<A: Allocator + Clone>(fdt: &Fdt, root: &mut PageTableRoot<A>) {
         let regs = MemoryIter::new(fdt);
         let live_kernel = region::live();
         assert_eq!(live_kernel.start.align_down(PAGE_SIZE), live_kernel.start);
@@ -186,15 +184,15 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
 
         let flags = PteFlags::R | PteFlags::W;
         for (addr, size) in regs {
-            let region = Region::from_size(Pa::new(addr as usize), size).unwrap();
+            let region = Region::from_size(Pa::new(addr as usize), size);
 
             let mut pa = region.start.align_down(PAGE_SIZE);
             let end = region.end.align_up(PAGE_SIZE);
             while pa < end {
                 if !live_kernel.contains(pa) {
-                    map(root, pa.into_va(), &mut alloc, flags);
+                    map(root, pa.into_va(), flags);
                 }
-                pa = pa.checked_offset(PAGE_SIZE.get()).unwrap();
+                pa = pa.offset(PAGE_SIZE);
             }
         }
     }
@@ -203,10 +201,7 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
     // island is temporary and reclaimable, so keep it broadly accessible until
     // boot code has fully handed off to runtime-owned stacks and text.
     #[unsafe(link_section = ".init.text")]
-    fn map_kernel(
-        mut alloc: impl FnMut() -> &'static mut MaybeUninit<PageTable>,
-        root: &mut PageTable,
-    ) {
+    fn map_kernel<A: Allocator + Clone>(root: &mut PageTableRoot<A>) {
         let kernel = region::kernel();
         assert_eq!(kernel.start.into_kernel_va(), KERNEL_VMA_BASE);
 
@@ -227,36 +222,25 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
         map_region(
             root,
             init,
-            &mut alloc,
             Pa::into_kernel_va,
             PteFlags::R | PteFlags::W | PteFlags::X,
         );
-        map_region(
-            root,
-            rx,
-            &mut alloc,
-            Pa::into_kernel_va,
-            PteFlags::R | PteFlags::X,
-        );
-        map_region(root, r, &mut alloc, Pa::into_kernel_va, PteFlags::R);
-        map_region(
-            root,
-            rw,
-            &mut alloc,
-            Pa::into_kernel_va,
-            PteFlags::R | PteFlags::W,
-        );
+        map_region(root, rx, Pa::into_kernel_va, PteFlags::R | PteFlags::X);
+        map_region(root, r, Pa::into_kernel_va, PteFlags::R);
+        map_region(root, rw, Pa::into_kernel_va, PteFlags::R | PteFlags::W);
     }
 
-    let root = PageTable::init_mut(alloc());
-    map_physical_memories(fdt, &mut alloc, root);
-    map_kernel(&mut alloc, root);
+    let mut root = PageTableRoot::new(alloc);
+    // Child page tables are owned by the root and use the allocator retained
+    // by the root Box, rather than an independently threaded allocator value.
+    map_physical_memories(fdt, &mut root);
+    map_kernel(&mut root);
 
     // TODO: generalize from reading FDT with MMIO_MAP_ADDR
     {
         let flags = PteFlags::R | PteFlags::W;
         let uart = Pa::new(0x1000_0000).into_va();
-        map(root, uart, &mut alloc, flags);
+        map(&mut root, uart, flags);
         unsafe {
             ptr::write(
                 CONSOLE.lock().deref_mut(),
@@ -265,10 +249,9 @@ pub fn init_page_table(fdt: &Fdt, mut alloc: impl FnMut() -> &'static mut MaybeU
         }
     }
 
-    unsafe {
-        let satp = SATP_MODE_SV39 | ppn(Va::from(root).into_pa());
-        asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
-        asm!("csrw satp, {}", in(reg) satp, options(nostack, preserves_flags));
-        asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
-    }
+    let root = PageTableRoot::leak(root);
+    // SAFETY: leaking the root keeps the complete page-table tree alive for the
+    // remainder of boot. It maps the current init code and stack as well as the
+    // runtime kernel and direct-map regions needed after this transition.
+    unsafe { asm::page_table::activate(root) };
 }

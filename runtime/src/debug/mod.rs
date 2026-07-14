@@ -81,10 +81,7 @@ fn dump_page_section(index: usize, page_meta: &PageMetaSection) {
     }
     dump_page_range(
         start,
-        pages[pages.len() - 1]
-            .addr()
-            .checked_offset(PAGE_SIZE.get())
-            .unwrap(),
+        pages[pages.len() - 1].addr().offset(PAGE_SIZE),
         status,
     );
 }

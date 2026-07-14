@@ -90,12 +90,13 @@
 //! opt back into hardware-style A/D updates.
 
 use core::mem::MaybeUninit;
+use core::ops::{Deref, DerefMut};
 use core::ptr;
 
 use bitflags::bitflags;
 
-use crate::arch::consts::UPPER_CANONICAL_BASE;
-use crate::arch::paging::active_root;
+use super::asm;
+use super::consts::UPPER_CANONICAL_BASE;
 use crate::mm::addr::{Pa, Va};
 
 pub const SATP_MODE_SV39: usize = 8 << 60;
@@ -103,6 +104,20 @@ pub const SATP_MODE_SV39: usize = 8 << 60;
 /// One 4 KiB Sv39 page table.
 #[repr(C, align(4096))]
 pub struct PageTable([PageTableEntry; 512]);
+
+impl Deref for PageTable {
+    type Target = [PageTableEntry; 512];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for PageTable {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
 
 impl PageTable {
     pub fn init_mut(page_table: &mut MaybeUninit<Self>) -> &mut Self {
@@ -124,19 +139,18 @@ impl PageTable {
         page_table
     }
 
-    pub fn init_from_root(page_table: &mut MaybeUninit<Self>) -> &mut Self {
-        let root = active_root();
+    pub fn init_from_root(page_table: &mut MaybeUninit<Self>) {
         let upper_start = vpn2(Va::new(UPPER_CANONICAL_BASE));
         let destination = page_table.as_mut_ptr().cast::<PageTableEntry>();
 
         unsafe {
+            let root = &*asm::page_table::active();
             ptr::write_bytes(destination, 0, upper_start);
             ptr::copy_nonoverlapping(
                 root.0.as_ptr().add(upper_start),
                 destination.add(upper_start),
                 root.0.len() - upper_start,
             );
-            &mut *page_table.as_mut_ptr()
         }
     }
 
@@ -224,20 +238,6 @@ impl PageTableEntry {
         }
     }
 
-    pub fn or_insert_with(
-        &mut self,
-        alloc: impl FnOnce() -> &'static mut MaybeUninit<PageTable>,
-    ) -> &mut PageTable {
-        if self.flags().contains(PteFlags::V) {
-            return unsafe { &mut *(self.address().into_va().as_mut_ptr()) };
-        }
-
-        let page_table = PageTable::init_mut(alloc());
-        self.mut_address(Va::from(&mut *page_table).into_pa())
-            .mut_flags(PteFlags::V);
-        page_table
-    }
-
     pub fn flags(&self) -> PteFlags {
         PteFlags::from_bits_truncate(self.0)
     }
@@ -259,4 +259,23 @@ pub fn vpn1(va: Va) -> usize {
 
 pub fn vpn0(va: Va) -> usize {
     (va.as_raw() >> 12) & MASK
+}
+
+pub fn unmap_from_active(va: Va) {
+    let root = unsafe { &mut *asm::page_table::active() };
+
+    // TODO: pte is not guaranteed that it is always on L0
+    let pte = root
+        .entry(vpn2(va))
+        .page_table_mut()
+        .unwrap()
+        .entry(vpn1(va))
+        .page_table_mut()
+        .unwrap()
+        .entry(vpn0(va));
+    debug_assert!(pte.is_valid(), "unmapping an unmapped page");
+    debug_assert!(pte.is_leaf(), "unmapping a non-leaf page table entry");
+    debug_assert_eq!(pte.address(), va.into_pa());
+
+    pte.clear();
 }

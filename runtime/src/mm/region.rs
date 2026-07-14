@@ -31,9 +31,9 @@ impl Region {
         }
     }
 
-    pub fn from_size(addr: Pa, size: NonZeroUsize) -> Option<Self> {
-        let end = addr.checked_offset(size.into())?;
-        Some(Region { start: addr, end })
+    pub fn from_size(addr: Pa, size: NonZeroUsize) -> Self {
+        let end = addr.offset(size);
+        Region { start: addr, end }
     }
 
     pub fn is_empty(&self) -> bool {

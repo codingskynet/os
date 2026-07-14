@@ -24,7 +24,6 @@ macro_rules! riscv_supervisor_doc_url {
 pub mod asm;
 pub mod consts;
 pub mod page_table;
-pub mod paging;
 pub mod regs;
 pub mod switch;
 pub mod timer;

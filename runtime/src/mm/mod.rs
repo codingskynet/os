@@ -4,8 +4,11 @@
 //! slab allocators for small objects, and the global allocator entry point used
 //! by `alloc`.
 
+pub use context::MmContext;
+
 pub mod addr;
 pub mod buddy;
+mod context;
 pub mod page_meta;
 pub mod region;
 pub mod slab;
@@ -14,6 +17,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::num::NonZeroUsize;
 use core::{mem, ptr};
 
+use crate::arch;
 use crate::arch::consts::PAGE_SIZE;
 use crate::kernel::sync::SpinLock;
 use crate::kernel::sync::freezable::Freezable;
@@ -39,15 +43,24 @@ pub fn is_same_page_meta_section(lhs: Pa, rhs: Pa) -> bool {
 
 pub fn free_init() {
     let init = crate::arch::region::init();
+    assert_eq!(init.start.align_down(PAGE_SIZE), init.start);
+    assert_eq!(init.end.align_down(PAGE_SIZE), init.end);
 
-    crate::arch::paging::unmap_kernel_region(init);
+    let mut pa = init.start;
+    while pa < init.end {
+        let va = pa.into_kernel_va();
+        arch::page_table::unmap_from_active(va);
+        pa = pa.offset(PAGE_SIZE);
+    }
+
+    arch::asm::page_table::flush_tlb();
 
     let mut buddy = BUDDY.lock();
     let mut pa = init.start;
     while pa < init.end {
         let page = unsafe { page_meta_at(pa).owned_reserved().into_buddy() };
         buddy.free(page);
-        pa = pa.checked_offset(PAGE_SIZE.get()).unwrap();
+        pa = pa.offset(PAGE_SIZE);
     }
 }
 
