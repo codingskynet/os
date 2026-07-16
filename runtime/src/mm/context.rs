@@ -2,7 +2,7 @@ use alloc::collections::btree_map::BTreeMap;
 use core::result::Result;
 
 use crate::arch;
-use crate::arch::consts::PAGE_SIZE;
+use crate::arch::consts::{LOWER_CANONICAL_END, PAGE_SIZE};
 use crate::arch::page_table::{PteFlags, vpn0, vpn1, vpn2};
 use crate::arch::paging::{PageTable, Permission};
 use crate::mm::Pages;
@@ -87,16 +87,19 @@ impl Mappings {
         pages: Pages,
         permissions: Permission,
     ) -> Result<(), Pages> {
-        let end = addr.offset(pages.size());
+        let Some(end) = mapping_end(addr, pages.size().get()) else {
+            return Err(pages);
+        };
 
         if let Some((prev_addr, prev)) = self.inner.range(..=addr).next_back()
-            && prev_addr.offset(prev.pages.size()) > addr
+            && mapping_end(*prev_addr, prev.pages.size().get())
+                .is_none_or(|prev_end| prev_end > addr.as_raw())
         {
             return Err(pages);
         }
 
         if let Some((next_addr, _)) = self.inner.range(addr..).next()
-            && end > *next_addr
+            && end > next_addr.as_raw()
         {
             return Err(pages);
         }
@@ -138,4 +141,10 @@ impl Mappings {
             current = next;
         }
     }
+}
+
+fn mapping_end(addr: Uva, size: usize) -> Option<usize> {
+    addr.as_raw()
+        .checked_add(size)
+        .filter(|end| *end <= LOWER_CANONICAL_END)
 }

@@ -81,6 +81,9 @@ fn load_elf(image: &[u8]) -> Result<(MmContext, Va)> {
         }
 
         let permissions = permissions(phdr.p_flags);
+        if start < end && permissions.is_empty() {
+            return Err(Error::InvalidExecutable);
+        }
         ensure_pages(&mut allocations, start, end, permissions)?;
 
         let data = elf

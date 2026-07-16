@@ -50,7 +50,10 @@ impl PageTable {
         size: NonZeroUsize,
         permissions: Permission,
     ) -> bool {
-        if size != PAGE_SIZE {
+        // A valid PTE without any R/W/X bit is a non-leaf page-table entry in
+        // Sv39. Never let an ordinary mapping be mistaken for an owning edge
+        // to another page-table page.
+        if size != PAGE_SIZE || permissions.is_empty() {
             return false;
         }
 

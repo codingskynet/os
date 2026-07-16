@@ -28,7 +28,7 @@ macro_rules! println {
 }
 
 #[macro_export]
-macro_rules! printk {
+macro_rules! print {
     ($($arg:tt)*) => ($crate::kernel::console::print(format_args!($($arg)*)));
 }
 

@@ -23,13 +23,18 @@
 //!   | &mut [PageMeta]::owned_buddy(order)            +-------+
 //!   +----------------------------------------------> | Buddy |
 //!                                                    +-------+
-//!                                                       | ^
-//!                                                       | |
-//!                                      into_slab(size)  | |  into_buddy()
-//!                                                       v |
-//!                                                    +------+
-//!                                                    | Slab |
-//!                                                    +------+
+//!                                                    /       \
+//!                                  into_slab(size)  /         \  into_pages()
+//!                                                  v           v
+//!                                             +------+     +-------+
+//!                                             | Slab |     | Pages |
+//!                                             +------+     +-------+
+//!                                                  \           /
+//!                                    into_buddy()   \         /  into_buddy()
+//!                                                    v       v
+//!                                                    +-------+
+//!                                                    | Buddy |
+//!                                                    +-------+
 //!
 //! Multi-page block transitions:
 //!
@@ -50,11 +55,11 @@
 //!                         the second Buddy head is demoted to a tail page
 //! ```
 //!
-//! `Buddy` and `Slab` are head-page states for a physical block. Every other
-//! page covered by that block is marked [`PageMetaState::BuddyReserved`], even
-//! while the head is in the `Slab` state. `BuddyReserved` is therefore not an
-//! independently ownable state; it changes only as part of splitting or merging
-//! a buddy block.
+//! `Buddy`, `Slab`, and `Pages` are head-page states for a physical block.
+//! Every other page covered by that block is marked
+//! [`PageMetaState::BuddyReserved`], regardless of which of those three states
+//! the head is in. `BuddyReserved` is therefore not an independently ownable
+//! state; it changes only as part of splitting or merging a buddy block.
 //!
 //! Transition summary:
 //!
@@ -73,6 +78,10 @@
 //!   while preserving the buddy metadata needed to return the block later.
 //! - [`OwnedPageMeta<Slab>::into_buddy`] is valid only for an empty, unlinked
 //!   slab block and restores the saved buddy metadata.
+//! - [`OwnedPageMeta<Buddy>::into_pages`] turns a buddy head into a
+//!   reference-counted `Pages` head while preserving its reserved tail.
+//! - [`OwnedPageMeta<Pages>::into_buddy`] returns the block after the final
+//!   strong [`crate::mm::Pages`] handle is dropped.
 
 pub use buddy::*;
 pub use pages::*;
@@ -304,8 +313,8 @@ pub impl &mut [PageMeta] {
 
 /// Current ownership state of a physical page.
 ///
-/// Multi-page buddy and slab blocks use a head page with rich metadata and mark
-/// the remaining pages as `BuddyReserved`.
+/// Multi-page buddy, slab, and reference-counted page blocks use a head page
+/// with rich metadata and mark the remaining pages as `BuddyReserved`.
 pub enum PageMetaState {
     /// Boot-created metadata that has not yet been handed to an allocator or
     /// marked reserved.
@@ -321,7 +330,7 @@ pub enum PageMetaState {
     /// and optional free-list link.
     Buddy(BuddyPageMeta),
 
-    /// Non-head page covered by a multi-page buddy or slab block.
+    /// Non-head page covered by a multi-page buddy, slab, or `Pages` block.
     ///
     /// This state prevents tail pages from being independently owned while the
     /// head page represents the whole block.
@@ -329,10 +338,15 @@ pub enum PageMetaState {
 
     /// Head page of a slab block borrowed from the buddy allocator.
     ///
-    /// The embedded [`SlabPageMeta`] includes the original buddy metadata so an
+    /// The embedded [`SlabPageMeta`] retains the block's reserved tail so an
     /// empty slab block can become [`PageMetaState::Buddy`] again.
     Slab(SlabPageMeta),
 
+    /// Head page of a reference-counted physical block.
+    ///
+    /// The embedded [`PagesMeta`] retains the block's reserved tail and counts
+    /// strong [`crate::mm::Pages`] owners. The final owner returns the block to
+    /// the buddy allocator.
     Pages(PagesMeta),
 }
 
@@ -363,11 +377,17 @@ impl<S> OwnedPageMeta<S> {
     }
 }
 
-/// Shared handle to slab metadata while a slab block is linked in an allocator.
+/// Copyable, non-owning handle to metadata whose state is identified by `S`.
 ///
-/// Multiple copies may exist while the allocator list is being manipulated; the
-/// allocator lock and [`SharedPageMeta::into_owned`] safety contract serialize
-/// conversion back into a linear owner.
+/// For `Slab`, copies are used while a block is linked in an allocator's
+/// intrusive list and the allocator lock serializes mutation. For `Pages`, this
+/// is the internal pointer carried by each reference-counted
+/// [`crate::mm::Pages`] value; copying `SharedPageMeta<Pages>` alone does not
+/// increment the strong count.
+///
+/// Converting one of these handles back into [`OwnedPageMeta`] requires the
+/// state-specific uniqueness guarantee documented by
+/// [`SharedPageMeta::into_owned`].
 pub struct SharedPageMeta<S> {
     page_meta: NonNull<PageMeta>,
     _marker: PhantomData<S>,
@@ -389,9 +409,9 @@ impl<S> PartialEq for SharedPageMeta<S> {
 
 impl<S> Eq for SharedPageMeta<S> {}
 
-// SAFETY: this handle points at boot-allocated page metadata. Sending it to
-// another hart transfers access to the same slab metadata; allocator locking
-// remains responsible for serializing mutation.
+// SAFETY: this handle points at boot-allocated page metadata. The state-specific
+// owner (`SlabAllocator` or the atomic `Pages` reference count) remains
+// responsible for serializing mutation and conversion back to linear ownership.
 unsafe impl<S> Send for SharedPageMeta<S> {}
 
 impl<S> SharedPageMeta<S> {
@@ -408,7 +428,11 @@ impl<S> SharedPageMeta<S> {
         }
     }
 
-    // TODO: this need to be unsafe?
+    /// Transfer a linear owner into the state's shared-handle protocol.
+    ///
+    /// This does not create an additional logical reference. State-specific
+    /// code must establish its initial list membership or strong count before
+    /// copies of the returned handle can be used.
     pub fn from_owned(owned: OwnedPageMeta<S>) -> Self {
         let shared = Self {
             page_meta: owned.page_meta,
@@ -423,7 +447,9 @@ impl<S> SharedPageMeta<S> {
     /// # Safety
     ///
     /// The caller must own the unique logical reference being converted and
-    /// exclude every other conversion to `OwnedPageMeta<S>`.
+    /// exclude every other conversion to `OwnedPageMeta<S>`. In particular, a
+    /// slab block must be empty and unlinked, while a `Pages` block must have
+    /// reached its final strong reference.
     pub unsafe fn into_owned(mut self) -> OwnedPageMeta<S> {
         unsafe { self.page_meta.as_mut().owned() }
     }

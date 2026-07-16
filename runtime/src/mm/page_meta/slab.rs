@@ -14,8 +14,9 @@ pub enum Slab {}
 
 /// Metadata stored in the head page of a slab block.
 ///
-/// `buddy_meta` remembers the original buddy block so the block can be returned
-/// to the buddy allocator when it becomes empty.
+/// `reserved` retains the original buddy block's non-head metadata entries so
+/// the complete block can be returned to the buddy allocator when it becomes
+/// empty.
 pub struct SlabPageMeta {
     pub reserved: NonNull<[PageMeta]>,
     pub size: NonZeroUsize,

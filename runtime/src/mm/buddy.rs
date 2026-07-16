@@ -1,15 +1,18 @@
 //! Buddy allocator for page-sized and larger physical allocations.
 //!
 //! Free blocks are tracked by order. Each block is represented by the first
-//! page's metadata; the remaining pages in the block stay marked reserved to
-//! prevent them from being owned independently.
+//! page's metadata; the remaining pages in the block stay in
+//! [`PageMetaState::BuddyReserved`] to prevent them from being owned
+//! independently.
 
 use core::cmp::{Ordering, min};
 use core::num::NonZeroUsize;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::mm::addr::Pa;
-use crate::mm::page_meta::{Buddy, OwnedPageMeta, PageMeta, RefMutSliceOfPageMetaExt};
+use crate::mm::page_meta::{
+    Buddy, OwnedPageMeta, PageMeta, PageMetaState, RefMutSliceOfPageMetaExt,
+};
 
 /// Physical page-frame buddy allocator.
 ///

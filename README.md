@@ -6,11 +6,18 @@ The toy project for implementing OS
 
 ```bash
 make setup          # install dependencies including QEMU
-make run            # build + create kernel.img/kernel.elf/kernel.debug + boot on QEMU
-make run DEBUG=1    # build debug image + boot on QEMU
-make build          # build only (ELF)
-make image          # build + create boot image + profiler/debug artifacts
+make run            # build artifacts/kernel.{elf,debug,bin} + boot on QEMU
+make run DEBUG=1    # build artifacts/kernel-debug.* + boot on QEMU
+make build          # build the boot ELF in Cargo's target directory
+make image          # copy the ELF and create debug + raw binary artifacts
 make clean          # remove artifacts
+```
+
+Run the same formatting, section, lint, host-test, and Rustdoc checks used by
+the project before submitting a change:
+
+```bash
+make check
 ```
 
 ## Managing userland ports

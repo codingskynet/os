@@ -43,7 +43,7 @@ pub fn print(addr: usize, len: usize) -> Result<(), PrintError> {
     let bytes = unsafe { slice::from_raw_parts(addr.as_raw() as *const u8, len) };
     match str::from_utf8(bytes) {
         Ok(text) => {
-            crate::printk!("{text}");
+            crate::print!("{text}");
             Ok(())
         }
         Err(_) => Err(PrintError::InvalidUtf8),
