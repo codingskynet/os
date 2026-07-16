@@ -5,11 +5,13 @@
 //! by `alloc`.
 
 pub use context::MmContext;
+pub use pages::Pages;
 
 pub mod addr;
 pub mod buddy;
 mod context;
 pub mod page_meta;
+mod pages;
 pub mod region;
 pub mod slab;
 

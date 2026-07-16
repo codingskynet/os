@@ -252,7 +252,7 @@ fn verify_slab_page_meta(slot: Slot, size: usize, block: usize) {
         slot.base as usize
     );
     assert_eq!(
-        slab.buddy_meta.reserved.len() + 1,
+        slab.reserved.len() + 1,
         block / PAGE_SIZE.get(),
         "allocator fuzz: slab reserved page count mismatch base={:#x}",
         slot.base as usize

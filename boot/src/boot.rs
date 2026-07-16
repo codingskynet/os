@@ -56,10 +56,12 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
 
             console::install_from_fdt(fdt).expect("failed to install console");
 
-            let mut alloc = BUMP_ALLOCATOR.lock();
-            alloc.init(fdt);
-            unsafe { arch::paging::init_page_table(fdt, &*alloc) };
-            init_page_metadata(&mut token, &mut alloc);
+            {
+                let mut alloc = BUMP_ALLOCATOR.lock();
+                alloc.init(fdt);
+                init_page_metadata(&mut token, &mut alloc);
+            }
+            unsafe { arch::paging::init_page_table(fdt) };
         }
     }
 
@@ -116,4 +118,8 @@ fn init_page_metadata(token: &mut FreezableToken, allocator: &mut BumpAllocator)
             map.add(PageMetaSection::new(page_meta_items, offset, memory_region))
         });
     }
+
+    // Page-table allocation and destruction may now resolve raw physical
+    // addresses back to their metadata while other boot globals remain mutable.
+    token.mark_shared(&PAGE_META_MAP);
 }

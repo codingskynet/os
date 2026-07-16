@@ -11,7 +11,7 @@ use core::ptr;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::mm::addr::Va;
-use crate::mm::page_meta::SharedPageMeta;
+use crate::mm::page_meta::{SharedPageMeta, Slab};
 use crate::mm::{BUDDY, page_meta_at};
 use crate::util::linked_list::Pointer;
 
@@ -22,7 +22,7 @@ use crate::util::linked_list::Pointer;
 pub struct SlabAllocator {
     slab_size: NonZeroUsize,
     block_size: NonZeroUsize,
-    head: Option<SharedPageMeta>,
+    head: Option<SharedPageMeta<Slab>>,
 }
 
 impl SlabAllocator {
@@ -92,21 +92,21 @@ impl SlabAllocator {
         }
     }
 
-    fn insert(&mut self, block: SharedPageMeta) {
+    fn insert(&mut self, block: SharedPageMeta<Slab>) {
         if let Some(head) = self.head {
             head.push_front(block);
         }
         self.head = Some(block);
     }
 
-    fn remove(&mut self, mut block: SharedPageMeta) {
+    fn remove(&mut self, mut block: SharedPageMeta<Slab>) {
         if self.head == Some(block) {
             self.head = block.node().next();
         }
         block.pop();
     }
 
-    fn alloc_from_block(&self, mut block: SharedPageMeta) -> *mut u8 {
+    fn alloc_from_block(&self, mut block: SharedPageMeta<Slab>) -> *mut u8 {
         let meta = block.deref_mut();
         debug_assert_eq!(meta.size, self.slab_size);
         debug_assert!(meta.used < self.capacity());
@@ -117,7 +117,7 @@ impl SlabAllocator {
         slab.as_mut_ptr()
     }
 
-    fn free_to_block(&self, mut block: SharedPageMeta, slab: Va) {
+    fn free_to_block(&self, mut block: SharedPageMeta<Slab>, slab: Va) {
         let meta = block.deref_mut();
         debug_assert_eq!(meta.size, self.slab_size);
         debug_assert!(meta.used <= self.capacity());
@@ -128,10 +128,10 @@ impl SlabAllocator {
         meta.used = used;
     }
 
-    unsafe fn block_from_slab(&self, slab: Va) -> SharedPageMeta {
+    unsafe fn block_from_slab(&self, slab: Va) -> SharedPageMeta<Slab> {
         let base = Va::new(slab.as_raw() & !(self.block_size.get() - 1));
         let page_meta = page_meta_at(base.into_pa());
-        let meta = unsafe { SharedPageMeta::new(page_meta) };
+        let meta = unsafe { SharedPageMeta::<Slab>::new(page_meta) };
 
         debug_assert_eq!(meta.addr().into_va(), base);
         debug_assert_eq!(meta.size, self.slab_size);
@@ -143,7 +143,7 @@ impl SlabAllocator {
         self.block_size.get() / self.slab_size.get()
     }
 
-    fn request_block(&mut self) -> Option<SharedPageMeta> {
+    fn request_block(&mut self) -> Option<SharedPageMeta<Slab>> {
         let mut owned = BUDDY
             .lock()
             .alloc(self.block_size)?
@@ -164,6 +164,6 @@ impl SlabAllocator {
         }
         unsafe { node.as_mut_ptr::<Option<Va>>().write(None) };
 
-        Some(owned.into_shared())
+        Some(SharedPageMeta::from_owned(owned))
     }
 }

@@ -3,6 +3,7 @@
 use core::num::NonZeroUsize;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
+use core::sync::atomic::AtomicUsize;
 use core::{mem, slice};
 
 use super::*;
@@ -127,18 +128,30 @@ impl OwnedPageMeta<Buddy> {
     }
 
     pub fn into_slab(mut self, size: NonZeroUsize) -> OwnedPageMeta<Slab> {
-        let PageMetaState::Buddy(buddy_meta) = mem::replace(self.as_mut(), PageMetaState::Uninit)
-        else {
+        let PageMetaState::Buddy(buddy) = mem::replace(self.as_mut(), PageMetaState::Uninit) else {
             unreachable!()
         };
-        debug_assert!(buddy_meta.next.is_none());
+        debug_assert!(buddy.next.is_none());
 
         *self.as_mut() = PageMetaState::Slab(SlabPageMeta {
-            buddy_meta,
+            reserved: buddy.reserved,
             size,
             used: 0,
             free: None,
             node: Node::new(),
+        });
+        unsafe { self.page_meta.as_mut().owned() }
+    }
+
+    pub fn into_pages(mut self) -> OwnedPageMeta<Pages> {
+        let PageMetaState::Buddy(buddy) = mem::replace(self.as_mut(), PageMetaState::Uninit) else {
+            unreachable!()
+        };
+        debug_assert!(buddy.next.is_none());
+
+        *self.as_mut() = PageMetaState::Pages(PagesMeta {
+            reserved: buddy.reserved,
+            strong: AtomicUsize::new(1),
         });
         unsafe { self.page_meta.as_mut().owned() }
     }

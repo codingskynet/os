@@ -89,7 +89,7 @@
 //! QEMU reset leaves ADUE clear, so M-mode software must set `menvcfg.ADUE` to
 //! opt back into hardware-style A/D updates.
 
-use core::mem::MaybeUninit;
+use core::mem::{self, MaybeUninit};
 use core::ops::{Deref, DerefMut};
 use core::ptr;
 
@@ -97,6 +97,7 @@ use bitflags::bitflags;
 
 use super::asm;
 use super::consts::UPPER_CANONICAL_BASE;
+use crate::mm::Pages;
 use crate::mm::addr::{Pa, Va};
 
 pub const SATP_MODE_SV39: usize = 8 << 60;
@@ -139,7 +140,11 @@ impl PageTable {
         page_table
     }
 
-    pub fn init_from_root(page_table: &mut MaybeUninit<Self>) {
+    /// Initialize a root by sharing the active root's upper-half mappings.
+    ///
+    /// Every copied non-leaf PTE is an owning edge to another page-table page,
+    /// so this method also acquires the corresponding raw [`Pages`] reference.
+    pub fn init_from_root(page_table: &mut MaybeUninit<Self>) -> &mut Self {
         let upper_start = vpn2(Va::new(UPPER_CANONICAL_BASE));
         let destination = page_table.as_mut_ptr().cast::<PageTableEntry>();
 
@@ -151,6 +156,19 @@ impl PageTable {
                 destination.add(upper_start),
                 root.0.len() - upper_start,
             );
+
+            let page_table = page_table.assume_init_mut();
+            for entry in page_table[upper_start..].iter() {
+                if entry.is_valid() && !entry.is_leaf() {
+                    // Reconstitute the active root's raw reference, clone it
+                    // for the copied PTE, then return both handles to raw
+                    // ownership so neither PTE loses its strong reference.
+                    let pages = Pages::from_raw(entry.address());
+                    mem::forget(pages.clone());
+                    mem::forget(pages);
+                }
+            }
+            page_table
         }
     }
 

@@ -17,11 +17,11 @@ pub enum Slab {}
 /// `buddy_meta` remembers the original buddy block so the block can be returned
 /// to the buddy allocator when it becomes empty.
 pub struct SlabPageMeta {
-    pub buddy_meta: BuddyPageMeta,
+    pub reserved: NonNull<[PageMeta]>,
     pub size: NonZeroUsize,
     pub used: usize,
     pub free: Option<Va>,
-    pub node: Node<SharedPageMeta>,
+    pub node: Node<SharedPageMeta<Slab>>,
 }
 
 impl Deref for OwnedPageMeta<Slab> {
@@ -45,58 +45,30 @@ impl DerefMut for OwnedPageMeta<Slab> {
 }
 
 impl OwnedPageMeta<Slab> {
-    pub fn into_shared(self) -> SharedPageMeta {
-        let handle = SharedPageMeta {
-            page_meta: self.page_meta,
-        };
-        mem::forget(self);
-        handle
-    }
-
     pub fn into_buddy(mut self) -> OwnedPageMeta<Buddy> {
-        let PageMetaState::Slab(SlabPageMeta {
-            buddy_meta,
-            used,
-            free,
-            node,
-            ..
-        }) = mem::replace(self.as_mut(), PageMetaState::Uninit)
-        else {
+        let PageMetaState::Slab(slab) = mem::replace(self.as_mut(), PageMetaState::Uninit) else {
             unreachable!()
         };
 
-        debug_assert!(used == 0);
-        debug_assert!(free.is_some());
-        debug_assert!(!node.is_linked());
+        debug_assert!(slab.used == 0);
+        debug_assert!(slab.free.is_some());
+        debug_assert!(!slab.node.is_linked());
 
-        debug_assert!(buddy_meta.next.is_none());
-        *self.as_mut() = PageMetaState::Buddy(buddy_meta);
+        *self.as_mut() = PageMetaState::Buddy(BuddyPageMeta {
+            reserved: slab.reserved,
+            next: None,
+        });
         unsafe { self.page_meta.as_mut().owned() }
     }
 }
 
-/// Shared handle to slab metadata while a slab block is linked in an allocator.
-///
-/// Multiple copies may exist while the allocator list is being manipulated; the
-/// allocator lock and [`SharedPageMeta::into_owned`] safety contract serialize
-/// conversion back into a linear owner.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SharedPageMeta {
-    page_meta: NonNull<PageMeta>,
-}
-
-// SAFETY: this handle points at boot-allocated page metadata. Sending it to
-// another hart transfers access to the same slab metadata; allocator locking
-// remains responsible for serializing mutation.
-unsafe impl Send for SharedPageMeta {}
-
-impl Pointer for SharedPageMeta {
+impl Pointer for SharedPageMeta<Slab> {
     fn node(&mut self) -> &mut Node<Self> {
         &mut self.deref_mut().node
     }
 }
 
-impl Deref for SharedPageMeta {
+impl Deref for SharedPageMeta<Slab> {
     type Target = SlabPageMeta;
 
     fn deref(&self) -> &Self::Target {
@@ -107,7 +79,7 @@ impl Deref for SharedPageMeta {
     }
 }
 
-impl DerefMut for SharedPageMeta {
+impl DerefMut for SharedPageMeta<Slab> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         let PageMetaState::Slab(slab) = &mut **(unsafe { self.page_meta.as_mut() }) else {
             unreachable!()
@@ -116,33 +88,7 @@ impl DerefMut for SharedPageMeta {
     }
 }
 
-impl SharedPageMeta {
-    /// Create a shared slab metadata handle from a page metadata reference.
-    ///
-    /// # Safety
-    ///
-    /// `page_meta` must currently be in the `Slab` state and its lifetime must
-    /// cover all uses of the returned handle.
-    pub unsafe fn new(page_meta: &PageMeta) -> Self {
-        Self {
-            page_meta: NonNull::from(page_meta),
-        }
-    }
-
-    /// Convert this shared handle back into a linear slab ownership token.
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure this is the only live handle being converted and
-    /// that the slab is not linked into any allocator list.
-    pub unsafe fn into_owned(mut self) -> OwnedPageMeta<Slab> {
-        unsafe { self.page_meta.as_mut().owned() }
-    }
-
-    pub fn addr(&self) -> Pa {
-        unsafe { self.page_meta.as_ref().addr() }
-    }
-
+impl SharedPageMeta<Slab> {
     pub fn is_empty(&self) -> bool {
         let SlabPageMeta { used, .. } = self.deref();
         *used == 0

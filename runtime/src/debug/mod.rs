@@ -105,6 +105,7 @@ fn page_status(page: &PageMeta) -> PageMetaStatus {
         },
         PageMetaState::BuddyReserved => PageMetaStatus::BuddyReserved,
         PageMetaState::Slab(_) => PageMetaStatus::Slab,
+        PageMetaState::Pages(_) => PageMetaStatus::Pages,
     }
 }
 
@@ -115,6 +116,7 @@ enum PageMetaStatus {
     Buddy { order: usize },
     BuddyReserved,
     Slab,
+    Pages,
 }
 
 impl fmt::Display for PageMetaStatus {
@@ -125,6 +127,7 @@ impl fmt::Display for PageMetaStatus {
             Self::Buddy { order } => write!(f, "Buddy(order={order})"),
             Self::BuddyReserved => f.write_str("BuddyReserved"),
             Self::Slab => f.write_str("Slab"),
+            Self::Pages => f.write_str("Pages"),
         }
     }
 }

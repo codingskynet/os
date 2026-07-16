@@ -75,16 +75,19 @@
 //!   slab block and restores the saved buddy metadata.
 
 pub use buddy::*;
+pub use pages::*;
 pub use slab::*;
 pub use uninit::*;
 
 mod buddy;
+mod pages;
 mod reserved;
 mod slab;
 mod uninit;
 
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
+use core::mem;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
@@ -329,6 +332,8 @@ pub enum PageMetaState {
     /// The embedded [`SlabPageMeta`] includes the original buddy metadata so an
     /// empty slab block can become [`PageMetaState::Buddy`] again.
     Slab(SlabPageMeta),
+
+    Pages(PagesMeta),
 }
 
 /// Linear ownership token for a page in state `S`.
@@ -355,5 +360,79 @@ impl<S> OwnedPageMeta<S> {
 
     fn as_mut(&mut self) -> &mut PageMetaState {
         unsafe { self.page_meta.as_mut() }
+    }
+}
+
+/// Shared handle to slab metadata while a slab block is linked in an allocator.
+///
+/// Multiple copies may exist while the allocator list is being manipulated; the
+/// allocator lock and [`SharedPageMeta::into_owned`] safety contract serialize
+/// conversion back into a linear owner.
+pub struct SharedPageMeta<S> {
+    page_meta: NonNull<PageMeta>,
+    _marker: PhantomData<S>,
+}
+
+impl<S> Clone for SharedPageMeta<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S> Copy for SharedPageMeta<S> {}
+
+impl<S> PartialEq for SharedPageMeta<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.page_meta == other.page_meta
+    }
+}
+
+impl<S> Eq for SharedPageMeta<S> {}
+
+// SAFETY: this handle points at boot-allocated page metadata. Sending it to
+// another hart transfers access to the same slab metadata; allocator locking
+// remains responsible for serializing mutation.
+unsafe impl<S> Send for SharedPageMeta<S> {}
+
+impl<S> SharedPageMeta<S> {
+    /// Create a shared handle for an existing metadata entry.
+    ///
+    /// # Safety
+    ///
+    /// `page_meta` must be in state `S`, remain allocated for the lifetime of
+    /// the handle, and follow that state's ownership protocol.
+    pub unsafe fn new(page_meta: &PageMeta) -> Self {
+        Self {
+            page_meta: NonNull::from(page_meta),
+            _marker: PhantomData,
+        }
+    }
+
+    // TODO: this need to be unsafe?
+    pub fn from_owned(owned: OwnedPageMeta<S>) -> Self {
+        let shared = Self {
+            page_meta: owned.page_meta,
+            _marker: PhantomData,
+        };
+        mem::forget(owned);
+        shared
+    }
+
+    /// Reconstruct a linear owner from a shared handle.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own the unique logical reference being converted and
+    /// exclude every other conversion to `OwnedPageMeta<S>`.
+    pub unsafe fn into_owned(mut self) -> OwnedPageMeta<S> {
+        unsafe { self.page_meta.as_mut().owned() }
+    }
+
+    pub fn addr(&self) -> Pa {
+        unsafe { self.page_meta.as_ref().addr() }
+    }
+
+    fn as_ref(&self) -> &PageMetaState {
+        unsafe { self.page_meta.as_ref() }
     }
 }

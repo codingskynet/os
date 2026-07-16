@@ -4,15 +4,14 @@
 //! low physical entry point to the high kernel virtual address. It later builds
 //! the final runtime page table from firmware memory information.
 
-use core::alloc::Allocator;
 use core::mem::MaybeUninit;
 use core::num::NonZeroUsize;
 use core::ops::DerefMut;
 use core::ptr;
 
 use runtime::arch::consts::*;
-use runtime::arch::page_table::{PageTable, PteFlags, vpn0, vpn1, vpn2};
-use runtime::arch::paging::PageTableRoot;
+use runtime::arch::page_table::{PageTable as RawPageTable, PteFlags, vpn0, vpn1, vpn2};
+use runtime::arch::paging::PageTable;
 use runtime::arch::{asm, region};
 use runtime::asm;
 use runtime::dev::dt::Fdt;
@@ -38,10 +37,10 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
 
     // Temporary Sv39 root page table using 1GiB leaf mapping for whole memory
     #[unsafe(link_section = ".init.bss")]
-    static mut TEMP_ROOT: MaybeUninit<PageTable> = MaybeUninit::uninit();
+    static mut TEMP_ROOT: MaybeUninit<RawPageTable> = MaybeUninit::uninit();
     // Temporary Sv39 L1 page table using huge-page leaf mappings for the kernel
     #[unsafe(link_section = ".init.bss")]
-    static mut TEMP_KERNEL_L1: MaybeUninit<PageTable> = MaybeUninit::uninit();
+    static mut TEMP_KERNEL_L1: MaybeUninit<RawPageTable> = MaybeUninit::uninit();
 
     unsafe {
         let fdt = Fdt::new(dtb_ptr).unwrap();
@@ -51,8 +50,8 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
         // - identity RAM map for the instructions immediately after satp
         // - linear direct map for early physical access after the jump
         // - kernel image map at its linked high virtual address
-        let root = &mut *PageTable::init_raw_mut(&raw mut TEMP_ROOT);
-        let kernel_l1 = &mut *PageTable::init_raw_mut(&raw mut TEMP_KERNEL_L1);
+        let root = &mut *RawPageTable::init_raw_mut(&raw mut TEMP_ROOT);
+        let kernel_l1 = &mut *RawPageTable::init_raw_mut(&raw mut TEMP_KERNEL_L1);
 
         let flag =
             PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::A | PteFlags::D;
@@ -139,11 +138,11 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
 ///
 /// # Safety
 ///
-/// The allocator must keep every returned allocation valid while this page
-/// table is active. It must also return uniquely owned allocations.
-pub unsafe fn init_page_table(fdt: &Fdt, alloc: &impl Allocator) {
+/// The buddy allocator and physical-page metadata must already be initialized.
+/// The resulting root is leaked and remains active for the kernel lifetime.
+pub unsafe fn init_page_table(fdt: &Fdt) {
     #[unsafe(link_section = ".init.text")]
-    fn map<A: Allocator + Clone>(root: &mut PageTableRoot<A>, va: Va, flags: PteFlags) {
+    fn map(root: &mut PageTable, va: Va, flags: PteFlags) {
         let flags = flags | PteFlags::V | PteFlags::A | PteFlags::D;
 
         root.cursor()
@@ -157,12 +156,7 @@ pub unsafe fn init_page_table(fdt: &Fdt, alloc: &impl Allocator) {
     }
 
     #[unsafe(link_section = ".init.text")]
-    fn map_region<A: Allocator + Clone>(
-        root: &mut PageTableRoot<A>,
-        region: Region,
-        to_va: impl Fn(Pa) -> Va,
-        flags: PteFlags,
-    ) {
+    fn map_region(root: &mut PageTable, region: Region, to_va: impl Fn(Pa) -> Va, flags: PteFlags) {
         if region.is_empty() {
             return;
         }
@@ -176,7 +170,7 @@ pub unsafe fn init_page_table(fdt: &Fdt, alloc: &impl Allocator) {
     }
 
     #[unsafe(link_section = ".init.text")]
-    fn map_physical_memories<A: Allocator + Clone>(fdt: &Fdt, root: &mut PageTableRoot<A>) {
+    fn map_physical_memories(fdt: &Fdt, root: &mut PageTable) {
         let regs = MemoryIter::new(fdt);
         let live_kernel = region::live();
         assert_eq!(live_kernel.start.align_down(PAGE_SIZE), live_kernel.start);
@@ -201,7 +195,7 @@ pub unsafe fn init_page_table(fdt: &Fdt, alloc: &impl Allocator) {
     // island is temporary and reclaimable, so keep it broadly accessible until
     // boot code has fully handed off to runtime-owned stacks and text.
     #[unsafe(link_section = ".init.text")]
-    fn map_kernel<A: Allocator + Clone>(root: &mut PageTableRoot<A>) {
+    fn map_kernel(root: &mut PageTable) {
         let kernel = region::kernel();
         assert_eq!(kernel.start.into_kernel_va(), KERNEL_VMA_BASE);
 
@@ -230,9 +224,7 @@ pub unsafe fn init_page_table(fdt: &Fdt, alloc: &impl Allocator) {
         map_region(root, rw, Pa::into_kernel_va, PteFlags::R | PteFlags::W);
     }
 
-    let mut root = PageTableRoot::new(alloc);
-    // Child page tables are owned by the root and use the allocator retained
-    // by the root Box, rather than an independently threaded allocator value.
+    let mut root = PageTable::new();
     map_physical_memories(fdt, &mut root);
     map_kernel(&mut root);
 
@@ -249,7 +241,7 @@ pub unsafe fn init_page_table(fdt: &Fdt, alloc: &impl Allocator) {
         }
     }
 
-    let root = PageTableRoot::leak(root);
+    let root = PageTable::leak(root);
     // SAFETY: leaking the root keeps the complete page-table tree alive for the
     // remainder of boot. It maps the current init code and stack as well as the
     // runtime kernel and direct-map regions needed after this transition.

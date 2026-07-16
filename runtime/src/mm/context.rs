@@ -1,14 +1,12 @@
-use alloc::alloc::Global;
-use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use core::num::NonZeroUsize;
 
 use crate::arch;
-use crate::arch::paging::PageTableRoot;
+use crate::arch::paging::PageTable;
 use crate::mm::addr::Va;
 
 pub struct MmContext {
-    page_table: PageTableRoot<Global>,
+    page_table: PageTable,
     mappings: Mappings,
 }
 
@@ -20,13 +18,8 @@ impl Default for MmContext {
 
 impl MmContext {
     pub fn new() -> Self {
-        let page_table = unsafe {
-            let mut page_table = Box::new_uninit_in(Global);
-            arch::page_table::PageTable::init_from_root(&mut page_table);
-            page_table.assume_init()
-        };
         Self {
-            page_table: page_table.into(),
+            page_table: PageTable::new_from_active(),
             mappings: Mappings::default(),
         }
     }
@@ -41,7 +34,7 @@ impl MmContext {
     /// valid trap path. The caller must serialize the transition against
     /// interrupts, concurrent mutation, and destruction of this context.
     pub unsafe fn activate(&self) {
-        unsafe { arch::asm::page_table::activate(self.page_table.root()) };
+        unsafe { arch::asm::page_table::activate(self.page_table.as_ptr()) };
     }
 }
 

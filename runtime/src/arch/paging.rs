@@ -1,172 +1,149 @@
-use alloc::alloc::Allocator;
-use alloc::boxed::Box;
-use core::mem::ManuallyDrop;
+use core::mem::{self, MaybeUninit};
 use core::ops::{Deref, DerefMut};
-use core::ptr;
 
-use crate::arch::page_table::{PageTable, PageTableEntry, PteFlags};
-use crate::mm::addr::Va;
+use crate::arch::consts::PAGE_SIZE;
+use crate::arch::page_table::{
+    PageTable as RawPageTable, PageTableEntry as RawPageTableEntry, PteFlags,
+};
+use crate::mm::Pages;
+use crate::mm::addr::Pa;
 
-pub struct PageTableRoot<A: Allocator>(Box<PageTable, A>);
+pub struct PageTable(Pages);
 
-impl<A: Allocator + Clone> PageTableRoot<A> {
-    pub fn new(alloc: A) -> Self {
+impl Default for PageTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PageTable {
+    pub fn new() -> Self {
+        let pages = Pages::new(PAGE_SIZE).unwrap();
         unsafe {
-            let mut page_table = Box::new_uninit_in(alloc);
-            PageTable::init_mut(&mut page_table);
-            Self(page_table.assume_init())
+            RawPageTable::init_mut(&mut *pages.as_mut_ptr::<MaybeUninit<RawPageTable>>());
         }
+        Self(pages)
     }
 
-    pub fn leak<'a>(root: Self) -> &'a mut PageTable
-    where
-        A: 'a,
-    {
-        let root = ManuallyDrop::new(root);
-        // SAFETY: `root` will not run `PageTableRoot::drop`, so this moves the
-        // inner Box exactly once. `Box::leak` then intentionally retains both
-        // the page-table allocation and its allocator.
-        let root = unsafe { ptr::read(ptr::addr_of!(root.0)) };
-        Box::leak(root)
+    pub fn new_from_active() -> Self {
+        let pages = Pages::new(PAGE_SIZE).unwrap();
+        unsafe {
+            let table = &mut *pages.as_mut_ptr::<MaybeUninit<RawPageTable>>();
+            RawPageTable::init_from_root(table);
+        }
+        Self(pages)
     }
 
-    /// Reconstruct a page-table root from a raw allocation.
-    ///
-    /// # Safety
-    ///
-    /// `raw` must have been allocated by `alloc` (or an equivalent clone) for
-    /// a valid `PageTable`, must be uniquely owned, and must not already be
-    /// managed by another `Box` or `PageTableRoot`. Its lower-half non-leaf
-    /// entries must likewise own page tables allocated by the same allocator.
-    pub unsafe fn from_raw_in(raw: *mut PageTable, alloc: A) -> Self {
-        unsafe { Self(Box::from_raw_in(raw, alloc)) }
+    pub fn leak<'a>(root: Self) -> &'a mut RawPageTable {
+        let table = root.0.as_mut_ptr();
+        mem::forget(root);
+        unsafe { &mut *table }
     }
 
-    pub fn cursor(&mut self) -> PageTableCursor<'_, A> {
-        let alloc = Box::allocator(&self.0).clone();
+    pub fn cursor(&mut self) -> PageTableCursor<'_> {
         PageTableCursor {
-            table: self.0.as_mut(),
-            alloc,
+            table: unsafe { &mut *self.0.as_mut_ptr() },
         }
     }
 
-    pub fn root(&self) -> &PageTable {
-        &self.0
+    pub fn address(&self) -> Pa {
+        self.0.addr()
+    }
+
+    pub fn as_ptr(&self) -> &RawPageTable {
+        unsafe { &*self.0.as_ptr() }
     }
 }
 
-// TODO: remove it and capsule by not allowing directly access of PageTable
-impl<A: Allocator> From<Box<PageTable, A>> for PageTableRoot<A> {
-    fn from(root: Box<PageTable, A>) -> Self {
-        Self(root)
+impl Drop for PageTable {
+    fn drop(&mut self) {
+        let table = unsafe { &mut *self.0.as_mut_ptr::<RawPageTable>() };
+        for entry in table.iter_mut() {
+            drop_nonleaf(entry);
+        }
     }
 }
 
-// TODO: deallocate child page table after thread exit and double free problem if shared page table
-// impl<A: Allocator> Drop for PageTableRoot<A> {
-//     fn drop(&mut self) {
-//         let alloc = Box::allocator(&self.0) as *const A;
-//         let user_end = vpn2(Va::new(UPPER_CANONICAL_BASE));
+fn drop_nonleaf(entry: &mut RawPageTableEntry) {
+    if !entry.is_valid() || entry.is_leaf() {
+        return;
+    }
 
-//         // SAFETY: lower-half page-table branches are allocated exclusively for
-//         // this root using equivalent clones of `alloc`. Upper-half entries are
-//         // shared kernel mappings and are deliberately excluded. The allocator
-//         // stored in the root Box remains alive until after this method returns.
-//         unsafe {
-//             deallocate_tables(&mut self.0[0..user_end], &*alloc);
-//         }
-//     }
-// }
+    let addr = entry.address();
+    entry.clear();
 
-// unsafe fn deallocate_tables<A: Allocator>(entries: &mut [PageTableEntry], alloc: &A) {
-//     for entry in entries {
-//         {
-//             let Some(page_table) = entry.page_table_mut() else {
-//                 continue;
-//             };
-
-//             unsafe {
-//                 deallocate_tables(&mut page_table[..], alloc);
-//             }
-
-//             // SAFETY: this non-leaf PTE uniquely owns `page_table`, all descendants
-//             // have already been released, and the PTE no longer references it.
-//             unsafe {
-//                 drop(Box::from_raw_in(page_table, alloc));
-//             }
-//         }
-//         entry.clear();
-//     }
-// }
-
-pub struct PageTableCursor<'a, A: Allocator> {
-    table: &'a mut PageTable,
-    alloc: A,
+    // SAFETY: a valid non-leaf PTE owns one raw `Pages` strong reference.
+    let pages = unsafe { Pages::from_raw(addr) };
+    if pages.is_unique() {
+        let table = unsafe { &mut *pages.as_mut_ptr::<RawPageTable>() };
+        for child in table.iter_mut() {
+            drop_nonleaf(child);
+        }
+    }
+    drop(pages);
 }
 
-impl<'a, A: Allocator> Deref for PageTableCursor<'a, A> {
-    type Target = PageTable;
+pub struct PageTableCursor<'a> {
+    table: &'a mut RawPageTable,
+}
+
+impl Deref for PageTableCursor<'_> {
+    type Target = RawPageTable;
 
     fn deref(&self) -> &Self::Target {
         self.table
     }
 }
 
-impl<'a, A: Allocator + Clone + 'a> PageTableCursor<'a, A> {
-    pub fn entry(&'a mut self, index: usize) -> PageTableEntryCursor<'a, A> {
+impl PageTableCursor<'_> {
+    pub fn entry(&mut self, index: usize) -> PageTableEntryCursor<'_> {
         PageTableEntryCursor {
             entry: self.table.entry(index),
-            alloc: self.alloc.clone(),
         }
     }
 }
 
-pub struct PageTableEntryCursor<'a, A: Allocator> {
-    entry: &'a mut PageTableEntry,
-    alloc: A,
+pub struct PageTableEntryCursor<'a> {
+    entry: &'a mut RawPageTableEntry,
 }
 
-impl<'a, A: Allocator> Deref for PageTableEntryCursor<'a, A> {
-    type Target = PageTableEntry;
+impl Deref for PageTableEntryCursor<'_> {
+    type Target = RawPageTableEntry;
 
     fn deref(&self) -> &Self::Target {
         self.entry
     }
 }
 
-impl<'a, A: Allocator> DerefMut for PageTableEntryCursor<'a, A> {
+impl DerefMut for PageTableEntryCursor<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.entry
     }
 }
 
-impl<'a, A: Allocator + Clone + 'a> PageTableEntryCursor<'a, A> {
+impl<'a> PageTableEntryCursor<'a> {
     // TODO: change directly or_insert through checking if it is page table
-    pub fn or_insert(self) -> PageTableCursor<'a, A> {
+    pub fn or_insert(self) -> PageTableCursor<'a> {
         let table = if self.entry.flags().contains(PteFlags::V) {
-            unsafe { &mut *(self.entry.address().into_va().as_mut_ptr()) }
-        } else {
-            let (table, alloc) =
-                Box::into_raw_with_allocator(Box::new_uninit_in(self.alloc.clone()));
-            drop(alloc);
-            // SAFETY: `table` came from a uniquely owned Box allocation. The
-            // allocation remains live, and `self.alloc` retains an equivalent
-            // allocator instance for its eventual reclamation.
-            let table = PageTable::init_mut(unsafe { &mut *table });
             self.entry
-                .mut_address(Va::from(&mut *table).into_pa())
-                .mut_flags(PteFlags::V);
-            table
+                .page_table_mut()
+                .expect("valid leaf PTE cannot be used as a page table")
+        } else {
+            let table = PageTable::new();
+            let address = table.address();
+            self.entry.mut_address(address).mut_flags(PteFlags::V);
+            mem::forget(table);
+            unsafe { &mut *address.into_va().as_mut_ptr() }
         };
 
-        PageTableCursor {
-            table,
-            alloc: self.alloc,
-        }
+        PageTableCursor { table }
     }
 
-    // TODO: drop table if it is unique
     pub fn clear(&mut self) {
-        self.entry.clear();
+        if self.entry.is_leaf() || !self.entry.is_valid() {
+            self.entry.clear();
+        } else {
+            drop_nonleaf(self.entry);
+        }
     }
 }
