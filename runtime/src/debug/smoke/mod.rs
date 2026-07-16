@@ -11,3 +11,6 @@ pub mod page_fault;
 
 #[cfg(feature = "smoke-kernel-thread")]
 pub mod kernel_thread;
+
+#[cfg(feature = "smoke-userland")]
+pub mod userland;

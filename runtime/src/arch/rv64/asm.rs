@@ -54,6 +54,37 @@ pub mod interrupt {
     }
 }
 
+pub mod memory {
+    use super::*;
+
+    const SSTATUS_SUM: usize = 1 << 18;
+
+    /// Enables supervisor access to user pages and returns whether it was
+    /// already enabled.
+    pub fn enable_userspace_access() -> bool {
+        let previous: usize;
+        unsafe {
+            asm!(
+                "csrrs {previous}, sstatus, {sum}",
+                previous = out(reg) previous,
+                sum = in(reg) SSTATUS_SUM,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+        previous & SSTATUS_SUM != 0
+    }
+
+    pub fn disable_userspace_access() {
+        unsafe {
+            asm!(
+                "csrc sstatus, {sum}",
+                sum = in(reg) SSTATUS_SUM,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+}
+
 pub mod page_table {
     use super::*;
     use crate::arch::page_table::{PageTable, SATP_MODE_SV39, ppn};

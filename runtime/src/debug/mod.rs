@@ -23,6 +23,8 @@ pub fn smoke() {
     smoke::page_fault::smoke();
     #[cfg(feature = "smoke-kernel-thread")]
     smoke::kernel_thread::smoke();
+    #[cfg(feature = "smoke-userland")]
+    smoke::userland::smoke();
 }
 
 pub fn dump_page_list() {

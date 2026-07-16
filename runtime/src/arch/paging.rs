@@ -1,12 +1,15 @@
 use core::mem::{self, MaybeUninit};
+use core::num::NonZeroUsize;
 use core::ops::{Deref, DerefMut};
+
+use bitflags::bitflags;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::arch::page_table::{
-    PageTable as RawPageTable, PageTableEntry as RawPageTableEntry, PteFlags,
+    PageTable as RawPageTable, PageTableEntry as RawPageTableEntry, PteFlags, vpn0, vpn1, vpn2,
 };
 use crate::mm::Pages;
-use crate::mm::addr::Pa;
+use crate::mm::addr::{Pa, Va, VarVa};
 
 pub struct PageTable(Pages);
 
@@ -40,10 +43,39 @@ impl PageTable {
         unsafe { &mut *table }
     }
 
-    pub fn cursor(&mut self) -> PageTableCursor<'_> {
-        PageTableCursor {
-            table: unsafe { &mut *self.0.as_mut_ptr() },
+    pub fn map(
+        &mut self,
+        va: impl Into<VarVa>,
+        pa: Pa,
+        size: NonZeroUsize,
+        permissions: Permission,
+    ) -> bool {
+        if size != PAGE_SIZE {
+            return false;
         }
+
+        let mut flags: PteFlags = permissions.into();
+        let va = match va.into() {
+            VarVa::User(uva) => {
+                flags |= PteFlags::U;
+                uva.into_va()
+            }
+            VarVa::Kernel(va) => va,
+        };
+
+        let mut entry = self
+            .cursor()
+            .into_entry(vpn2(va))
+            .or_insert()
+            .into_entry(vpn1(va))
+            .or_insert()
+            .into_entry(vpn0(va));
+        if entry.is_valid() {
+            return false;
+        }
+
+        entry.mut_address(pa).mut_flags(flags | PteFlags::V);
+        true
     }
 
     pub fn address(&self) -> Pa {
@@ -52,6 +84,12 @@ impl PageTable {
 
     pub fn as_ptr(&self) -> &RawPageTable {
         unsafe { &*self.0.as_ptr() }
+    }
+
+    fn cursor(&mut self) -> PageTableCursor<'_> {
+        PageTableCursor {
+            table: unsafe { &mut *self.0.as_mut_ptr() },
+        }
     }
 }
 
@@ -95,8 +133,8 @@ impl Deref for PageTableCursor<'_> {
     }
 }
 
-impl PageTableCursor<'_> {
-    pub fn entry(&mut self, index: usize) -> PageTableEntryCursor<'_> {
+impl<'a> PageTableCursor<'a> {
+    pub fn into_entry(self, index: usize) -> PageTableEntryCursor<'a> {
         PageTableEntryCursor {
             entry: self.table.entry(index),
         }
@@ -145,5 +183,14 @@ impl<'a> PageTableEntryCursor<'a> {
         } else {
             drop_nonleaf(self.entry);
         }
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Permission: u8 {
+        const R = 1 << 0;
+        const W = 1 << 1;
+        const X = 1 << 2;
     }
 }

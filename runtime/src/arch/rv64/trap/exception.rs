@@ -1,4 +1,5 @@
 use crate::arch::trap::{Exception, TrapFrame};
+use crate::debug;
 use crate::kernel::syscall::{self, Syscall};
 use crate::mm::addr::Va;
 
@@ -13,7 +14,7 @@ pub fn handle_exception(frame: &mut TrapFrame, exception: Exception) {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PageFaultReason {
     Instruction(Va),
     LoadPage(Va),
@@ -43,7 +44,7 @@ fn handle_page_fault(frame: &mut TrapFrame, reason: PageFaultReason) {
 
     #[cfg(feature = "smoke-page-fault")]
     {
-        if fault_addr == crate::debug::smoke::page_fault::PAGE_FAULT_SMOKE_ADDR {
+        if fault_addr.as_raw() == crate::debug::smoke::page_fault::PAGE_FAULT_SMOKE_ADDR {
             frame.sepc = frame.sepc.offset(4usize);
             return;
         }
@@ -56,8 +57,17 @@ fn handle_page_fault(frame: &mut TrapFrame, reason: PageFaultReason) {
 }
 
 fn handle_ecall_from_umode(frame: &mut TrapFrame) {
-    match Syscall::from(&frame.regs) {
+    let syscall = Syscall::from(&frame.regs);
+    debug!("user program calls {syscall:?}");
+
+    match syscall {
         Syscall::Exit(code) => syscall::exit(code),
+        Syscall::Print((addr, len)) => {
+            frame.regs.a0 = match syscall::print(addr, len) {
+                Ok(()) => 0,
+                Err(error) => error as usize,
+            };
+        }
         Syscall::Unknown(number) => {
             panic!(
                 "unhandled ecall from U-mode: number={}, sepc={}, sstatus={:?}",
@@ -65,5 +75,6 @@ fn handle_ecall_from_umode(frame: &mut TrapFrame) {
             );
         }
     }
-    // frame.sepc = frame.sepc.offset(4).unwrap();
+
+    frame.sepc = frame.sepc.offset(4usize);
 }

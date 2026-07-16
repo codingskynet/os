@@ -43,6 +43,10 @@ impl Pages {
         self.meta.strong.load(Ordering::Acquire) == 1
     }
 
+    pub fn size(&self) -> NonZeroUsize {
+        NonZeroUsize::new((self.meta.reserved.len() + 1) * PAGE_SIZE.get()).unwrap()
+    }
+
     /// Reconstruct the handle whose ownership was previously transferred to
     /// `addr` with [`Pages::into_raw`].
     ///

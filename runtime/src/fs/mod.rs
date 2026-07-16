@@ -1,7 +1,9 @@
 pub use context::FsContext;
+pub use exec::kernel_exec;
 pub use file::{File, Fnode};
 
 mod context;
+mod exec;
 mod file;
 mod tarfs;
 
@@ -22,6 +24,12 @@ type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     #[error("not found")]
     NotFound,
+    #[error("invalid elf")]
+    InvalidElf(#[from] elf::ParseError),
+    #[error("invalid executable")]
+    InvalidExecutable,
+    #[error("out of memory")]
+    OutOfMemory,
 }
 
 const INITARFS: &[u8] = include_bytes!("../../../artifacts/initarfs");
@@ -69,6 +77,3 @@ pub fn open(path: &str) -> Result<File> {
 
     root.open(&Path::from_str(path).unwrap())
 }
-
-// pub fn kernel_exec(path: &str) -> Result<Infallible> {
-// }

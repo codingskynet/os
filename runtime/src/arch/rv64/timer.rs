@@ -15,7 +15,7 @@ pub fn init() {
 
 pub fn handle_timer() {
     schedule_next_tick();
-    SCHEDULER.run_next();
+    SCHEDULER.try_run_next();
 }
 
 fn schedule_next_tick() {

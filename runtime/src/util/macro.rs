@@ -76,18 +76,23 @@ macro_rules! asm {
 // decoding (register arguments).
 
 #[macro_export]
-macro_rules! args_enum_from_usize {
+macro_rules! args_enum {
     (
         $(#[$enum_meta:meta])*
-        $vis:vis enum $name:ident ($($arg:ident),* $(,)?) {
+        $vis:vis enum $name:ident (
+            $code_ty:ty
+            $(, $arg:ident : $arg_ty:ty)*
+            $(,)?
+        ) {
             $($arms:tt)*
         }
     ) => {
-        args_enum_from_usize!(@parse
+        args_enum!(@parse
             meta: [$(#[$enum_meta])*],
             vis: [$vis],
             name: [$name],
-            args: [$($arg),*],
+            code_ty: [$code_ty],
+            args: [$($arg: $arg_ty),*],
             variants: [],
             matches: [],
             rest: [$($arms)*],
@@ -99,7 +104,8 @@ macro_rules! args_enum_from_usize {
         meta: [$($meta:tt)*],
         vis: [$vis:vis],
         name: [$name:ident],
-        args: [$($arg:ident),*],
+        code_ty: [$code_ty:ty],
+        args: [$($arg:ident : $arg_ty:ty),*],
         variants: [$($variants:tt)*],
         matches: [$($matches:tt)*],
         rest: [
@@ -110,11 +116,12 @@ macro_rules! args_enum_from_usize {
             $($rest:tt)*
         ],
     ) => {
-        args_enum_from_usize!(@parse
+        args_enum!(@parse
             meta: [$($meta)*],
             vis: [$vis],
             name: [$name],
-            args: [$($arg),*],
+            code_ty: [$code_ty],
+            args: [$($arg: $arg_ty),*],
             variants: [
                 $($variants)*
                 $(#[$variant_meta])*
@@ -135,7 +142,8 @@ macro_rules! args_enum_from_usize {
         meta: [$($meta:tt)*],
         vis: [$vis:vis],
         name: [$name:ident],
-        args: [$($arg:ident),*],
+        code_ty: [$code_ty:ty],
+        args: [$($arg:ident : $arg_ty:ty),*],
         variants: [$($variants:tt)*],
         matches: [$($matches:tt)*],
         rest: [
@@ -144,11 +152,12 @@ macro_rules! args_enum_from_usize {
             $($rest:tt)*
         ],
     ) => {
-        args_enum_from_usize!(@parse
+        args_enum!(@parse
             meta: [$($meta)*],
             vis: [$vis],
             name: [$name],
-            args: [$($arg),*],
+            code_ty: [$code_ty],
+            args: [$($arg: $arg_ty),*],
             variants: [
                 $($variants)*
                 $(#[$variant_meta])*
@@ -166,22 +175,22 @@ macro_rules! args_enum_from_usize {
         meta: [$($meta:tt)*],
         vis: [$vis:vis],
         name: [$name:ident],
-        args: [$($arg:ident),*],
+        code_ty: [$code_ty:ty],
+        args: [$($arg:ident : $arg_ty:ty),*],
         variants: [$($variants:tt)*],
         matches: [$($matches:tt)*],
         rest: [],
     ) => {
         $($meta)*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         $vis enum $name {
             $($variants)*
-            Unknown(usize),
+            Unknown($code_ty),
         }
 
         impl $name {
             /// Decode `code`, using the bound payload names in variant expressions.
             #[allow(unused_variables)]
-            $vis fn new(code: usize, $($arg: usize),*) -> Self {
+            $vis fn new(code: $code_ty $(, $arg: $arg_ty)*) -> Self {
                 match code {
                     $($matches)*
                     _ => Self::Unknown(code),

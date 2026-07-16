@@ -9,6 +9,7 @@ smoke-allocator = ["runtime/smoke-allocator"]
 smoke-initarfs = ["runtime/smoke-initarfs"]
 smoke-page-fault = ["runtime/smoke-page-fault"]
 smoke-kernel-thread = ["runtime/smoke-kernel-thread"]
+smoke-userland = ["runtime/smoke-userland"]
 
 [lints]
 workspace = true

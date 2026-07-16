@@ -5,6 +5,7 @@
 //! architecture-agnostic.
 
 pub mod interrupt;
+pub mod memory;
 pub mod paging;
 pub mod region;
 

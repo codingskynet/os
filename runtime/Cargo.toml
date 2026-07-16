@@ -10,11 +10,12 @@ test = false
 workspace = true
 
 [features]
-smoke = ["smoke-allocator", "smoke-initarfs", "smoke-page-fault", "smoke-kernel-thread"]
+smoke = ["smoke-allocator", "smoke-initarfs", "smoke-page-fault", "smoke-kernel-thread", "smoke-userland"]
 smoke-allocator = []
 smoke-initarfs = []
 smoke-page-fault = []
 smoke-kernel-thread = []
+smoke-userland = []
 
 [dependencies]
 arrayvec.workspace = true

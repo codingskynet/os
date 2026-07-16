@@ -98,8 +98,11 @@ pub struct Memory {
 unsafe impl Allocator for Memory {
     #[unsafe(link_section = ".init.text")]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let size = NonZeroUsize::new(layout.size()).unwrap_or(NonZeroUsize::MIN);
         let align = NonZeroUsize::new(layout.align()).unwrap();
+        let Some(size) = NonZeroUsize::new(layout.size()) else {
+            let ptr = NonNull::without_provenance(align);
+            return Ok(NonNull::slice_from_raw_parts(ptr, 0));
+        };
         let region = self.alloc(size, align).ok_or(AllocError)?;
         let ptr = NonNull::new(region.start.into_va().as_mut_ptr()).ok_or(AllocError)?;
 

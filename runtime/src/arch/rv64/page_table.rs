@@ -97,6 +97,7 @@ use bitflags::bitflags;
 
 use super::asm;
 use super::consts::UPPER_CANONICAL_BASE;
+use crate::arch::paging::Permission;
 use crate::mm::Pages;
 use crate::mm::addr::{Pa, Va};
 
@@ -204,6 +205,26 @@ bitflags! {
 
         /// Dirty. Set by hardware on writes, or pre-set by the kernel.
         const D = 1 << 7;
+    }
+}
+
+impl From<Permission> for PteFlags {
+    fn from(value: Permission) -> Self {
+        let mut flags = Self::empty();
+
+        if value.contains(Permission::R) {
+            flags |= Self::R;
+        }
+
+        if value.contains(Permission::W) {
+            flags |= Self::R | Self::W;
+        }
+
+        if value.contains(Permission::X) {
+            flags |= Self::X;
+        }
+
+        flags
     }
 }
 

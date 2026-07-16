@@ -11,7 +11,7 @@ use crate::fs::FsContext;
 use crate::kernel::scheduler::SCHEDULER;
 use crate::kernel::syscall;
 use crate::mm::MmContext;
-use crate::mm::addr::Va;
+use crate::mm::addr::{Uva, Va};
 
 pub fn spawn(entry: impl FnOnce() + Send + 'static) -> Arc<AtomicUsize> {
     let thread = Thread::new(entry);
@@ -28,7 +28,7 @@ pub fn jump_to_idle() -> ! {
     let mut idle = Thread::new(|| {
         loop {
             core::hint::spin_loop();
-            yield_now();
+            SCHEDULER.try_run_next();
         }
     });
 
@@ -121,8 +121,27 @@ impl Thread {
         f(unsafe { &mut *Va::new(sp & !(mem::align_of::<Thread>() - 1)).as_mut_ptr() })
     }
 
+    pub fn is_current_user_readable(addr: Uva, len: usize) -> bool {
+        let mut readable = false;
+        Self::with_current(|current| {
+            readable = current.mm.is_user_readable(addr, len);
+        });
+        readable
+    }
+
+    pub(crate) fn replace_current_mm(mm: MmContext) {
+        Self::with_current(|current| {
+            let old = mem::replace(&mut current.mm, mm);
+            // SAFETY: the new context contains the shared kernel mappings and
+            // remains owned by the current thread after activation.
+            unsafe { current.mm.activate() };
+            // Do not release the old root until satp points at the new one.
+            drop(old);
+        });
+    }
+
     pub fn run(mut thread: ManuallyDrop<Box<Self>>) {
-        Thread::with_current(|current| {
+        Self::with_current(|current| {
             if !ptr::eq(current, &**thread) {
                 thread.state = ThreadState::Running;
 

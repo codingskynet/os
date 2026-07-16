@@ -10,8 +10,8 @@ use core::ops::DerefMut;
 use core::ptr;
 
 use runtime::arch::consts::*;
-use runtime::arch::page_table::{PageTable as RawPageTable, PteFlags, vpn0, vpn1, vpn2};
-use runtime::arch::paging::PageTable;
+use runtime::arch::page_table::{PageTable as RawPageTable, PteFlags, vpn1, vpn2};
+use runtime::arch::paging::{PageTable, Permission as Perm};
 use runtime::arch::{asm, region};
 use runtime::asm;
 use runtime::dev::dt::Fdt;
@@ -133,30 +133,16 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
     }
 }
 
-#[unsafe(link_section = ".init.text")]
 /// Build and activate the final kernel page table.
 ///
 /// # Safety
 ///
 /// The buddy allocator and physical-page metadata must already be initialized.
 /// The resulting root is leaked and remains active for the kernel lifetime.
+#[unsafe(link_section = ".init.text")]
 pub unsafe fn init_page_table(fdt: &Fdt) {
     #[unsafe(link_section = ".init.text")]
-    fn map(root: &mut PageTable, va: Va, flags: PteFlags) {
-        let flags = flags | PteFlags::V | PteFlags::A | PteFlags::D;
-
-        root.cursor()
-            .entry(vpn2(va))
-            .or_insert()
-            .entry(vpn1(va))
-            .or_insert()
-            .entry(vpn0(va))
-            .mut_address(va.into_pa())
-            .mut_flags(flags);
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    fn map_region(root: &mut PageTable, region: Region, to_va: impl Fn(Pa) -> Va, flags: PteFlags) {
+    fn map_region(root: &mut PageTable, region: Region, to_va: impl Fn(Pa) -> Va, perms: Perm) {
         if region.is_empty() {
             return;
         }
@@ -164,7 +150,7 @@ pub unsafe fn init_page_table(fdt: &Fdt) {
         let mut pa = region.start.align_down(PAGE_SIZE);
         let end = region.end.align_up(PAGE_SIZE);
         while pa < end {
-            map(root, to_va(pa), flags);
+            root.map(to_va(pa), pa, PAGE_SIZE, perms);
             pa = pa.offset(PAGE_SIZE);
         }
     }
@@ -176,7 +162,7 @@ pub unsafe fn init_page_table(fdt: &Fdt) {
         assert_eq!(live_kernel.start.align_down(PAGE_SIZE), live_kernel.start);
         assert_eq!(live_kernel.end.align_down(PAGE_SIZE), live_kernel.end);
 
-        let flags = PteFlags::R | PteFlags::W;
+        let perms = Perm::R | Perm::W;
         for (addr, size) in regs {
             let region = Region::from_size(Pa::new(addr as usize), size);
 
@@ -184,7 +170,7 @@ pub unsafe fn init_page_table(fdt: &Fdt) {
             let end = region.end.align_up(PAGE_SIZE);
             while pa < end {
                 if !live_kernel.contains(pa) {
-                    map(root, pa.into_va(), flags);
+                    root.map(pa.into_va(), pa, PAGE_SIZE, perms);
                 }
                 pa = pa.offset(PAGE_SIZE);
             }
@@ -213,15 +199,10 @@ pub unsafe fn init_page_table(fdt: &Fdt) {
         assert_eq!(rw.start.align_down(PAGE_SIZE), rw.start);
         assert_eq!(rw.end.align_down(PAGE_SIZE), rw.end);
 
-        map_region(
-            root,
-            init,
-            Pa::into_kernel_va,
-            PteFlags::R | PteFlags::W | PteFlags::X,
-        );
-        map_region(root, rx, Pa::into_kernel_va, PteFlags::R | PteFlags::X);
-        map_region(root, r, Pa::into_kernel_va, PteFlags::R);
-        map_region(root, rw, Pa::into_kernel_va, PteFlags::R | PteFlags::W);
+        map_region(root, init, Pa::into_kernel_va, Perm::R | Perm::W | Perm::X);
+        map_region(root, rx, Pa::into_kernel_va, Perm::R | Perm::X);
+        map_region(root, r, Pa::into_kernel_va, Perm::R);
+        map_region(root, rw, Pa::into_kernel_va, Perm::R | Perm::W);
     }
 
     let mut root = PageTable::new();
@@ -230,9 +211,9 @@ pub unsafe fn init_page_table(fdt: &Fdt) {
 
     // TODO: generalize from reading FDT with MMIO_MAP_ADDR
     {
-        let flags = PteFlags::R | PteFlags::W;
-        let uart = Pa::new(0x1000_0000).into_va();
-        map(&mut root, uart, flags);
+        let uart_pa = Pa::new(0x1000_0000);
+        let uart = uart_pa.into_va();
+        root.map(uart, uart_pa, PAGE_SIZE, Perm::R | Perm::W);
         unsafe {
             ptr::write(
                 CONSOLE.lock().deref_mut(),

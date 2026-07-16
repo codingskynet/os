@@ -4,5 +4,5 @@
 ulib::runtime!();
 
 fn main() -> usize {
-    0
+    39
 }

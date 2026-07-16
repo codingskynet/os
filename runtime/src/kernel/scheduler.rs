@@ -27,8 +27,15 @@ impl Scheduler {
     }
 
     pub fn run_next(&self) {
+        assert!(self.try_run_next(), "empty queue");
+    }
+
+    pub fn try_run_next(&self) -> bool {
         let _guard = InterruptGuard::new();
-        let next = self.threads.lock().pop_front().expect("empty thread queue");
+        let Some(next) = self.threads.lock().pop_front() else {
+            return false;
+        };
         Thread::run(next);
+        true
     }
 }

@@ -55,7 +55,7 @@ use super::regs::GeneralRegs;
 use crate::arch::timer::handle_timer;
 use crate::arch::trap::exception::{PageFaultReason, handle_exception};
 use crate::mm::addr::Va;
-use crate::{args_enum_from_usize, asm};
+use crate::{args_enum, asm};
 
 pub fn init() {
     unsafe {
@@ -66,6 +66,44 @@ pub fn init() {
             options(nostack, preserves_flags),
         );
     }
+}
+
+/// Leave S-mode and begin a freshly loaded program in U-mode.
+///
+/// # Safety
+///
+/// `entry` and the memory below `user_sp` must be valid user mappings in the
+/// active address space. This must be called on the current thread's kernel
+/// stack. The entry sequence disables supervisor interrupts before changing
+/// the `sscratch` stack-switch contract.
+#[unsafe(naked)]
+pub unsafe extern "C" fn enter_user(_entry: Va, _user_sp: Va) -> ! {
+    macro_rules! zero_regs {
+        ($($reg:ident),+ $(,)?) => {
+            $crate::asm!(@asm_lines(
+                $(("li ", stringify!($reg), ", 0")),+
+            ))
+        };
+    }
+
+    naked_asm!(
+        "csrw sepc, a0",
+        "li t0, {clear}",
+        "csrc sstatus, t0",
+        "csrw sscratch, sp",
+        "li t0, {spie}",
+        "csrs sstatus, t0",
+        "mv sp, a1",
+        zero_regs!(
+            ra, gp, tp,
+            a0, a1, a2, a3, a4, a5, a6, a7,
+            t0, t1, t2, t3, t4, t5, t6,
+            s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
+        ),
+        "sret",
+        clear = const Sstatus::SPP.bits() | Sstatus::SIE.bits(),
+        spie = const Sstatus::SPIE.bits(),
+    )
 }
 
 /// Supervisor trap vector entry.
@@ -313,13 +351,14 @@ impl Scause {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TrapCause {
     Exception(Exception),
     Interrupt(Interrupt),
 }
 
-args_enum_from_usize! {
+args_enum! {
+    #[derive(Clone, Copy, Debug, PartialEq)]
     #[doc = concat!(
         "Standard synchronous exception codes reported in `scause`.\n\n",
         "The numeric codes come from RISC-V Privileged ISA ",
@@ -336,7 +375,7 @@ args_enum_from_usize! {
         "[`stval` register]: ",
         riscv_supervisor_doc_url!("#12-1-1-9-supervisor-trap-value-stval-register"),
     )]
-    pub enum Exception(stval) {
+    pub enum Exception(usize, stval: usize) {
         0 => InstructionAddressMisaligned(Va = Va::new(stval)),
         1 => InstructionAccessFault(Va = Va::new(stval)),
         2 => IllegalInstruction(usize = stval),
@@ -355,7 +394,8 @@ args_enum_from_usize! {
     }
 }
 
-args_enum_from_usize! {
+args_enum! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     #[doc = concat!(
         "Standard supervisor-level interrupt codes reported in `scause`.\n\n",
         "The numeric codes come from RISC-V Privileged ISA ",
@@ -367,7 +407,7 @@ args_enum_from_usize! {
         "[`scause` register]: ",
         riscv_supervisor_doc_url!("#scause"),
     )]
-    pub enum Interrupt() {
+    pub enum Interrupt(usize) {
         1 => SupervisorSoftware,
         5 => SupervisorTimer,
         9 => SupervisorExternal,
