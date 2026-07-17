@@ -9,6 +9,10 @@ SUBDIRS := simple ports/micropython/ports/os
 CLEAN_SUBDIRS := $(SUBDIRS) ports/micropython/mpy-cross
 
 ARCH ?= riscv64gc-unknown-none-elf
+# The top-level kernel DEBUG setting propagates through MAKEFLAGS. Keep the
+# freestanding userland build independent so DEBUG=1 kernel smoke tests do not
+# accidentally enable Zig's sanitizer-instrumented C debug mode.
+USERLAND_DEBUG ?= 0
 
 .PHONY: staging build initarfs clean ports-prepare ports-sync ports-status ports-verify ports-clean FORCE
 
@@ -23,7 +27,8 @@ build: staging
 	+set -e; for d in $(SUBDIRS); do \
 		$(MAKE) -C $$d install \
 			ROOTFS_BIN="$(abspath $(ROOTFS_BIN))" \
-			ARCH="$(ARCH)"; \
+			ARCH="$(ARCH)" \
+			DEBUG="$(USERLAND_DEBUG)"; \
 	done
 
 initarfs: $(INITARFS)

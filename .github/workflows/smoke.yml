@@ -34,7 +34,7 @@ jobs:
           path: |
             userland/ports/micropython
             ~/.cache/zig
-          key: micropython-${{ runner.os }}-${{ runner.arch }}-zig-${{ env.ZIG_VERSION }}-${{ hashFiles('userland/ports.toml', 'userland/patches/micropython/**') }}
+          key: micropython-${{ runner.os }}-${{ runner.arch }}-zig-${{ env.ZIG_VERSION }}-${{ hashFiles('userland/Makefile', 'userland/ports.toml', 'userland/patches/micropython/**') }}
 
       - name: Prepare MicroPython port
         run: make ports-prepare PORTS=micropython
