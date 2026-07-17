@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "==> Installing system dependencies (QEMU)..."
+echo "==> Installing system dependencies (QEMU and Zig)..."
 if command -v brew &>/dev/null; then
-    brew install qemu
+    brew install qemu zig
 elif command -v apt &>/dev/null; then
-    sudo apt update && sudo apt install -y qemu-system-riscv64
-elif command -v dnf &>/dev/null; then
-    sudo dnf install -y qemu-system-riscv
-elif command -v pacman &>/dev/null; then
-    sudo pacman -S --noconfirm qemu-system-riscv
+    sudo apt update && sudo apt install -y qemu-system-riscv64 zig
 else
     echo "WARN: No supported package manager found. Please install QEMU manually."
+fi
+
+if ! command -v zig &>/dev/null; then
+    echo "ERROR: Zig is required to build the MicroPython userland port."
+    echo "       Install it from https://ziglang.org/download/ and rerun setup."
+    exit 1
 fi
 
 echo "==> Installing Rust toolchain components..."

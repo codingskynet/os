@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  ZIG_VERSION: 0.16.0
 
 jobs:
   qemu:
@@ -16,11 +17,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
       - name: Install Rust toolchain
         run: rustup show
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Cache MicroPython checkout and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            userland/ports/micropython
+            ~/.cache/zig
+          key: micropython-${{ runner.os }}-${{ runner.arch }}-zig-${{ env.ZIG_VERSION }}-${{ hashFiles('userland/ports.toml', 'userland/patches/micropython/**') }}
+
+      - name: Prepare MicroPython port
+        run: make ports-prepare PORTS=micropython
 
       - name: Install QEMU
         uses: awalsh128/cache-apt-pkgs-action@v1
@@ -63,3 +80,26 @@ jobs:
 
           diff -u qemu-smoke-kernel-thread.expected qemu-smoke-kernel-thread.actual
           ! grep -q "kernel panic" qemu-smoke.log
+
+      - name: Run MicroPython smoke test in QEMU
+        run: |
+          set +e
+          {
+            # Enter paste mode and execute the script shipped in the rootfs.
+            printf '\005'
+            cat userland/rootfs/eratosthenes.py
+            printf '\004'
+          } | timeout 20s make run > qemu-micropython.log 2>&1
+          status=$?
+          set -e
+
+          cat qemu-micropython.log
+
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            exit "$status"
+          fi
+
+          grep -q "MicroPython .*; os with rv64gc" qemu-micropython.log
+          grep -Fq "eratosthenes: [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97]" qemu-micropython.log
+          ! grep -q "Traceback (most recent call last)" qemu-micropython.log
+          ! grep -q "kernel panic" qemu-micropython.log

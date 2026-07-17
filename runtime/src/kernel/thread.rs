@@ -7,6 +7,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch;
+use crate::arch::paging::Permission;
 use crate::fs::FsContext;
 use crate::kernel::scheduler::SCHEDULER;
 use crate::kernel::syscall;
@@ -121,10 +122,10 @@ impl Thread {
         f(unsafe { &mut *Va::new(sp & !(mem::align_of::<Thread>() - 1)).as_mut_ptr() })
     }
 
-    pub fn is_current_user_readable(addr: Uva, len: usize) -> bool {
+    pub fn is_accessible(addr: Uva, len: usize, permissions: Permission) -> bool {
         let mut readable = false;
         Self::with_current(|current| {
-            readable = current.mm.is_user_readable(addr, len);
+            readable = current.mm.is_accessible(addr, len, permissions);
         });
         readable
     }

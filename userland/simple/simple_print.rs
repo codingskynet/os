@@ -4,7 +4,7 @@
 ulib::runtime!();
 
 fn main() -> usize {
-    if ulib::syscall::print("hello, userland!\n").is_err() {
+    if ulib::syscall::write("hello, userland!\n").is_err() {
         return 1;
     }
     39

@@ -12,6 +12,8 @@ pub fn kernel_init() -> ! {
 
         #[cfg(debug_assertions)]
         crate::debug::smoke();
+
+        fs::kernel_exec("/bin/micropython").expect("failed to run micropython");
     });
 
     thread::jump_to_idle();

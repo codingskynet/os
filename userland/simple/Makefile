@@ -11,9 +11,9 @@ BINARIES := $(addprefix $(ROOTFS_BIN)/,$(PROGRAMS))
 
 RUSTFLAGS ?= -C opt-level=s -C panic=abort
 
-.PHONY: build clean FORCE
+.PHONY: install clean FORCE
 
-build: $(BINARIES)
+install: $(BINARIES)
 
 # Real file rule (not a phony) so parallel builds order binaries after the
 # rlib. FORCE delegates to the sub-make every time; it only rewrites the rlib

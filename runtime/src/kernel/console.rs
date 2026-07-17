@@ -8,6 +8,7 @@ use core::ops::DerefMut;
 use core::{ptr, str};
 
 use crate::dev::dt::{Fdt, RegIter};
+use crate::dev::uart::Read;
 use crate::dev::uart::ns16550::NS16550;
 use crate::kernel::dt;
 use crate::kernel::dt::{FdtWalkeraExt, ValueaExt};
@@ -88,6 +89,16 @@ impl Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         match self {
             Console::Ns16550(ns16550) => ns16550.write_str(s),
+        }
+    }
+}
+
+impl Read for Console {
+    type Error = core::convert::Infallible;
+
+    fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error> {
+        match self {
+            Console::Ns16550(ns16550) => ns16550.read(buffer),
         }
     }
 }

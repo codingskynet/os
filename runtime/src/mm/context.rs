@@ -65,8 +65,8 @@ impl MmContext {
         Ok(())
     }
 
-    pub fn is_user_readable(&self, addr: Uva, len: usize) -> bool {
-        self.mappings.is_readable(addr, len)
+    pub fn is_accessible(&self, addr: Uva, len: usize, permissions: Permission) -> bool {
+        self.mappings.is_accessible(addr, len, permissions)
     }
 }
 
@@ -112,7 +112,7 @@ impl Mappings {
         self.inner.remove(&addr).map(|mapping| mapping.pages)
     }
 
-    fn is_readable(&self, addr: Uva, len: usize) -> bool {
+    fn is_accessible(&self, addr: Uva, len: usize, permissions: Permission) -> bool {
         if len == 0 {
             return true;
         }
@@ -129,7 +129,7 @@ impl Mappings {
             else {
                 return false;
             };
-            if current > mapping_last || !mapping.permissions.contains(Permission::R) {
+            if current > mapping_last || !mapping.permissions.contains(permissions) {
                 return false;
             }
             if last <= mapping_last {
