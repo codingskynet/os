@@ -4,11 +4,17 @@ INITARFS := ../artifacts/initarfs
 ROOTFS_BIN := $(STAGING)/bin
 
 # Built packages that install into $(ROOTFS_BIN).
-SUBDIRS := simple
+SUBDIRS := simple ports/micropython/ports/os
+# Host-side tools built by packages but not installed into the rootfs.
+CLEAN_SUBDIRS := $(SUBDIRS) ports/micropython/mpy-cross
 
 ARCH ?= riscv64gc-unknown-none-elf
+# The top-level kernel DEBUG setting propagates through MAKEFLAGS. Keep the
+# freestanding userland build independent so DEBUG=1 kernel smoke tests do not
+# accidentally enable Zig's sanitizer-instrumented C debug mode.
+USERLAND_DEBUG ?= 0
 
-.PHONY: staging build initarfs ports-prepare ports-sync ports-status ports-verify ports-clean FORCE
+.PHONY: staging build initarfs clean ports-prepare ports-sync ports-status ports-verify ports-clean FORCE
 
 # Sync committed static files into the staging rootfs, removing anything stale.
 staging: FORCE
@@ -16,12 +22,13 @@ staging: FORCE
 	rsync -a --delete $(SRC_ROOTFS)/ $(STAGING)/
 	mkdir -p $(ROOTFS_BIN)
 
-# Recursively build packages and install binaries into staging.
+# Recursively install packages into staging, building their binaries as needed.
 build: staging
 	+set -e; for d in $(SUBDIRS); do \
-		$(MAKE) -C $$d build \
+		$(MAKE) -C $$d install \
 			ROOTFS_BIN="$(abspath $(ROOTFS_BIN))" \
-			ARCH="$(ARCH)"; \
+			ARCH="$(ARCH)" \
+			DEBUG="$(USERLAND_DEBUG)"; \
 	done
 
 initarfs: $(INITARFS)
@@ -31,6 +38,16 @@ $(INITARFS): build
 	COPYFILE_DISABLE=1 tar --format ustar -cf $@.tmp -C $(STAGING) .
 	cmp -s $@.tmp $@ || mv $@.tmp $@
 	rm -f $@.tmp
+
+clean:
+	+set -e; for d in $(CLEAN_SUBDIRS); do \
+		if [ -f "$$d/Makefile" ]; then \
+			$(MAKE) -C $$d clean \
+				ROOTFS_BIN="$(abspath $(ROOTFS_BIN))" \
+				ARCH="$(ARCH)"; \
+		fi; \
+	done
+	rm -rf $(STAGING) $(INITARFS) $(INITARFS).tmp
 
 FORCE:
 

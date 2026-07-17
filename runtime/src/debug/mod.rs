@@ -25,6 +25,8 @@ pub fn smoke() {
     smoke::kernel_thread::smoke();
     #[cfg(feature = "smoke-userland")]
     smoke::userland::smoke();
+
+    printlnk!("smoke finish");
 }
 
 pub fn dump_page_list() {

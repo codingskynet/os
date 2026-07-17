@@ -78,6 +78,7 @@ run: image
 		-kernel $(KERNEL_BIN)
 
 clean:
+	+$(MAKE) -C userland clean
 	rm -rf $(ARTIFACTS_DIR)
 	cargo clean
 

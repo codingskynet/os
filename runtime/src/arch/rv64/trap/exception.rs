@@ -60,21 +60,23 @@ fn handle_ecall_from_umode(frame: &mut TrapFrame) {
     let syscall = Syscall::from(&frame.regs);
     debug!("user program calls {syscall:?}");
 
-    match syscall {
+    frame.regs.a0 = match syscall {
         Syscall::Exit(code) => syscall::exit(code),
-        Syscall::Print((addr, len)) => {
-            frame.regs.a0 = match syscall::print(addr, len) {
-                Ok(()) => 0,
-                Err(error) => error as usize,
-            };
-        }
+        Syscall::Write((addr, len)) => match syscall::write(addr, len) {
+            Ok(()) => 0,
+            Err(error) => error as usize,
+        },
+        Syscall::Read((addr, len)) => match syscall::read(addr, len) {
+            Ok(read) => read,
+            Err(error) => error as usize,
+        },
         Syscall::Unknown(number) => {
             panic!(
                 "unhandled ecall from U-mode: number={}, sepc={}, sstatus={:?}",
                 number, frame.sepc, frame.sstatus
-            );
+            )
         }
-    }
+    };
 
     frame.sepc = frame.sepc.offset(4usize);
 }
