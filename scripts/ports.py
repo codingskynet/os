@@ -174,7 +174,15 @@ def apply_patches(port: Port, checkout: Path) -> None:
     if extra:
         raise PortsError(f"{port.name}: patch(es) absent from series: {', '.join(extra)}")
     if names:
-        run(("git", "am", "--", *(str(port.patches / name) for name in names)), cwd=checkout)
+        # `git am` creates commits and therefore requires a committer identity.
+        # Keep port preparation independent of each developer's global Git
+        # configuration and of the intentionally blank identity on CI runners.
+        run((
+            "git",
+            "-c", "user.name=OS port importer",
+            "-c", "user.email=ports@localhost",
+            "am", "--", *(str(port.patches / name) for name in names),
+        ), cwd=checkout)
 
 
 # Shallow-fetch the pinned revision and apply its stored patch series.
