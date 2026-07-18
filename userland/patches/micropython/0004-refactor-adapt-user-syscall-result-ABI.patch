@@ -1,0 +1,156 @@
+From 3fa6c0aaa4b57fe4a26c931c7e8945ccdfef201c Mon Sep 17 00:00:00 2001
+From: OS port importer <ports@localhost>
+Date: Sat, 18 Jul 2026 17:37:46 +0900
+Subject: refactor: adapt user syscall result ABI
+
+---
+ ports/os/README.md    |  4 ++++
+ ports/os/main.c       | 18 +++++++++---------
+ ports/os/os_syscall.h | 24 ++++++++++++++++--------
+ ports/os/uart_core.c  |  9 ++++++---
+ 4 files changed, 35 insertions(+), 20 deletions(-)
+
+diff --git a/ports/os/README.md b/ports/os/README.md
+index fd093e4..cba532f 100644
+--- a/ports/os/README.md
++++ b/ports/os/README.md
+@@ -9,6 +9,10 @@ this repository. It uses the kernel's user syscall ABI directly:
+ - `a0 = 3`, `a1 = path`, `a2 = length`: open
+ - `a0 = 4`, `a1 = fd`: close
+ 
++Every returning syscall places a status in `a0` and a value in `a1`. A zero
++status denotes success and makes the full-width value valid; a nonzero status
++is the syscall-specific error code and the value is zero.
++
+ The kernel enters `_start` with a prepared user stack and zero-filled BSS. The
+ port initializes `gp`, runs the standard friendly MicroPython REPL, and exits
+ through syscall 0 when the REPL finishes. Standard input, output, and error use
+diff --git a/ports/os/main.c b/ports/os/main.c
+index d56675b..63f205c 100644
+--- a/ports/os/main.c
++++ b/ports/os/main.c
+@@ -27,11 +27,11 @@ typedef struct _os_reader_t {
+ static mp_uint_t os_reader_readbyte(void *data) {
+     os_reader_t *reader = data;
+     if (reader->pos == reader->len) {
+-        intptr_t read = os_read(reader->fd, reader->buffer, sizeof(reader->buffer));
+-        if (read <= 0) {
++        os_syscall_result_t result = os_read(reader->fd, reader->buffer, sizeof(reader->buffer));
++        if (result.status != 0 || result.value == 0) {
+             return MP_READER_EOF;
+         }
+-        reader->len = read;
++        reader->len = result.value;
+         reader->pos = 0;
+     }
+     return reader->buffer[reader->pos++];
+@@ -62,13 +62,13 @@ void gc_collect(void) {
+ 
+ mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
+     const char *path = qstr_str(filename);
+-    intptr_t fd = os_open(path, strlen(path));
+-    if (fd < 0) {
++    os_syscall_result_t result = os_open(path, strlen(path));
++    if (result.status != 0) {
+         mp_raise_OSError_with_filename(MP_ENOENT, path);
+     }
+ 
+     os_reader_t *os_reader = m_new_obj(os_reader_t);
+-    os_reader->fd = fd;
++    os_reader->fd = result.value;
+     os_reader->len = 0;
+     os_reader->pos = 0;
+ 
+@@ -81,11 +81,11 @@ mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
+ }
+ 
+ mp_import_stat_t mp_import_stat(const char *path) {
+-    intptr_t fd = os_open(path, strlen(path));
+-    if (fd < 0) {
++    os_syscall_result_t result = os_open(path, strlen(path));
++    if (result.status != 0) {
+         return MP_IMPORT_STAT_NO_EXIST;
+     }
+-    (void)os_close(fd);
++    (void)os_close(result.value);
+     return MP_IMPORT_STAT_FILE;
+ }
+ 
+diff --git a/ports/os/os_syscall.h b/ports/os/os_syscall.h
+index 8695301..aa0fcde 100644
+--- a/ports/os/os_syscall.h
++++ b/ports/os/os_syscall.h
+@@ -18,7 +18,12 @@ enum {
+     OS_STDERR_FILENO = 2,
+ };
+ 
+-static inline intptr_t os_syscall(uintptr_t number, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3) {
++typedef struct _os_syscall_result_t {
++    uintptr_t status;
++    uintptr_t value;
++} os_syscall_result_t;
++
++static inline os_syscall_result_t os_syscall(uintptr_t number, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3) {
+     register uintptr_t a0 __asm ("a0") = number;
+     register uintptr_t a1 __asm ("a1") = arg1;
+     register uintptr_t a2 __asm ("a2") = arg2;
+@@ -26,26 +31,29 @@ static inline intptr_t os_syscall(uintptr_t number, uintptr_t arg1, uintptr_t ar
+ 
+     __asm volatile (
+         "ecall"
+-        : "+r" (a0)
+-        : "r" (a1), "r" (a2), "r" (a3)
++        : "+r" (a0), "+r" (a1)
++        : "r" (a2), "r" (a3)
+         : "memory"
+         );
+-    return (intptr_t)a0;
++    return (os_syscall_result_t) {
++        .status = a0,
++        .value = a1,
++    };
+ }
+ 
+-static inline intptr_t os_read(int fd, void *buffer, size_t len) {
++static inline os_syscall_result_t os_read(int fd, void *buffer, size_t len) {
+     return os_syscall(OS_SYSCALL_READ, (uintptr_t)fd, (uintptr_t)buffer, len);
+ }
+ 
+-static inline intptr_t os_write(int fd, const void *buffer, size_t len) {
++static inline os_syscall_result_t os_write(int fd, const void *buffer, size_t len) {
+     return os_syscall(OS_SYSCALL_WRITE, (uintptr_t)fd, (uintptr_t)buffer, len);
+ }
+ 
+-static inline intptr_t os_open(const char *path, size_t len) {
++static inline os_syscall_result_t os_open(const char *path, size_t len) {
+     return os_syscall(OS_SYSCALL_OPEN, (uintptr_t)path, len, 0);
+ }
+ 
+-static inline intptr_t os_close(int fd) {
++static inline os_syscall_result_t os_close(int fd) {
+     return os_syscall(OS_SYSCALL_CLOSE, (uintptr_t)fd, 0, 0);
+ }
+ 
+diff --git a/ports/os/uart_core.c b/ports/os/uart_core.c
+index ffc8c5d..10baab8 100644
+--- a/ports/os/uart_core.c
++++ b/ports/os/uart_core.c
+@@ -10,12 +10,15 @@ int mp_hal_stdin_rx_chr(void) {
+     unsigned char c = 0;
+     // The kernel read blocks until the first byte is available.  Retry only on
+     // an ABI-level error; a successful one-byte request always returns 1.
+-    while (os_read(OS_STDIN_FILENO, &c, 1) != 1) {
+-    }
++    os_syscall_result_t result;
++    do {
++        result = os_read(OS_STDIN_FILENO, &c, 1);
++    } while (result.status != 0 || result.value != 1);
+     return c;
+ }
+ 
+ // Send string of given length
+ mp_uint_t mp_hal_stdout_tx_strn(const char *str, mp_uint_t len) {
+-    return os_write(OS_STDOUT_FILENO, str, len) == (intptr_t)len ? len : 0;
++    os_syscall_result_t result = os_write(OS_STDOUT_FILENO, str, len);
++    return result.status == 0 && result.value == len ? len : 0;
+ }

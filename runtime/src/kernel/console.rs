@@ -3,13 +3,13 @@
 //! The console starts with a platform default UART and is replaced from the
 //! device tree once boot has parsed `stdout-path`.
 
-use core::fmt::{self, Write};
 use core::ops::DerefMut;
-use core::{ptr, str};
+use core::{fmt, ptr};
 
 use crate::dev::dt::{Fdt, RegIter};
-use crate::dev::uart::Read;
 use crate::dev::uart::ns16550::NS16550;
+use crate::dev::uart::{Read, Write};
+use crate::fs::Fnode;
 use crate::kernel::dt;
 use crate::kernel::dt::{FdtWalkeraExt, ValueaExt};
 use crate::kernel::sync::SpinLock;
@@ -69,7 +69,7 @@ macro_rules! debug {
 }
 
 pub fn print(args: fmt::Arguments) {
-    CONSOLE.lock().write_fmt(args).unwrap();
+    fmt::Write::write_fmt(&mut *CONSOLE.lock(), args).unwrap()
 }
 
 // TODO: remove and depends only on runtime installation
@@ -85,10 +85,19 @@ pub enum Console {
     Ns16550(NS16550),
 }
 
-impl Write for Console {
+impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        Write::write(self, s.as_bytes()).unwrap();
+        Ok(())
+    }
+}
+
+impl Write for Console {
+    type Error = core::convert::Infallible;
+
+    fn write(&mut self, buffer: &[u8]) -> Result<usize, Self::Error> {
         match self {
-            Console::Ns16550(ns16550) => ns16550.write_str(s),
+            Console::Ns16550(ns16550) => Write::write(ns16550, buffer),
         }
     }
 }
@@ -100,6 +109,18 @@ impl Read for Console {
         match self {
             Console::Ns16550(ns16550) => ns16550.read(buffer),
         }
+    }
+}
+
+pub struct ConsoleFnode;
+
+impl Fnode for ConsoleFnode {
+    fn read(&self, _offset: usize, buffer: &mut [u8]) -> usize {
+        crate::dev::uart::Read::read(&mut *CONSOLE.lock(), buffer).unwrap()
+    }
+
+    fn write(&self, _offset: usize, buffer: &[u8]) -> usize {
+        Write::write(&mut *CONSOLE.lock(), buffer).unwrap()
     }
 }
 

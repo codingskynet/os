@@ -2,7 +2,7 @@
 //!
 //! Free blocks are tracked by order. Each block is represented by the first
 //! page's metadata; the remaining pages in the block stay in
-//! [`PageMetaState::BuddyReserved`] to prevent them from being owned
+//! [`PageMetaState::BuddyReserved`](crate::mm::page_meta::PageMetaState::BuddyReserved) to prevent them from being owned
 //! independently.
 
 use core::cmp::{Ordering, min};
@@ -10,9 +10,7 @@ use core::num::NonZeroUsize;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::mm::addr::Pa;
-use crate::mm::page_meta::{
-    Buddy, OwnedPageMeta, PageMeta, PageMetaState, RefMutSliceOfPageMetaExt,
-};
+use crate::mm::page_meta::{Buddy, OwnedPageMeta, PageMeta, RefMutSliceOfPageMetaExt};
 
 /// Physical page-frame buddy allocator.
 ///

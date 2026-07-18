@@ -7,9 +7,9 @@ use crate::{fs, printlnk};
 pub fn kernel_init() -> ! {
     printlnk!("hello, init!");
 
-    thread::spawn(|| {
-        fs::init();
+    fs::init();
 
+    thread::spawn(|| {
         #[cfg(debug_assertions)]
         crate::debug::smoke();
 

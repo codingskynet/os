@@ -8,10 +8,11 @@ use elf::abi::{EM_RISCV, ET_EXEC, PF_R, PF_W, PF_X, PT_LOAD};
 use elf::endian::LittleEndian;
 use elf::file::Class;
 
-use super::{Error, Result, open};
+use super::{Error, Result};
 use crate::arch;
 use crate::arch::consts::{LOWER_CANONICAL_END, PAGE_SIZE};
 use crate::arch::paging::Permission;
+use crate::fs::{AbsolutePath, MOUNTS};
 use crate::kernel::thread::Thread;
 use crate::mm::addr::{Uva, Va};
 use crate::mm::{MmContext, Pages};
@@ -114,12 +115,20 @@ fn load_elf(image: &[u8]) -> Result<(MmContext, Va)> {
 }
 
 fn read_all(path: &str) -> Result<Vec<u8>> {
-    let mut file = open(path)?;
+    let node = {
+        let guard = MOUNTS.lock();
+        let mounts = guard.as_ref().ok_or(Error::NotFound)?;
+
+        let root = mounts.get(AbsolutePath::ROOT).ok_or(Error::NotFound)?;
+        root.open(&AbsolutePath::ROOT.join(path))
+    }?;
     let mut image = Vec::new();
+    let mut offset = 0;
     loop {
         let start = image.len();
         image.resize(start + PAGE_SIZE.get(), 0);
-        let read = file.read(&mut image[start..])?;
+        let read = node.read(offset, &mut image[start..]);
+        offset += read;
         image.truncate(start + read);
         if read < PAGE_SIZE.get() {
             return Ok(image);

@@ -78,12 +78,8 @@ jobs:
 
       - name: Run MicroPython smoke test in QEMU
         run: |
-          {
-            # Enter paste mode and execute the script shipped in the rootfs.
-            printf '\005'
-            cat userland/rootfs/eratosthenes.py
-            printf '\004'
-          } | bash scripts/run-until-output.sh \
+          # Import the module from the rootfs through MicroPython's file reader.
+          printf 'import eratosthenes\r\n' | bash scripts/run-until-output.sh \
             120 \
             qemu-micropython.log \
             "smoke finish" \

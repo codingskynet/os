@@ -9,7 +9,7 @@ use crate::arch::page_table::{
     PageTable as RawPageTable, PageTableEntry as RawPageTableEntry, PteFlags, vpn0, vpn1, vpn2,
 };
 use crate::mm::Pages;
-use crate::mm::addr::{Pa, Va, VarVa};
+use crate::mm::addr::{Pa, VarVa};
 
 pub struct PageTable(Pages);
 

@@ -36,7 +36,7 @@ pub fn smoke() {
 
     while exit_codes
         .iter()
-        .any(|code| code.load(Ordering::Relaxed) == usize::MAX)
+        .any(|code| code.load(Ordering::Relaxed) == isize::MIN)
     {
         thread::yield_now();
     }

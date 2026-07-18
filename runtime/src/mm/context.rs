@@ -3,7 +3,6 @@ use core::result::Result;
 
 use crate::arch;
 use crate::arch::consts::{LOWER_CANONICAL_END, PAGE_SIZE};
-use crate::arch::page_table::{PteFlags, vpn0, vpn1, vpn2};
 use crate::arch::paging::{PageTable, Permission};
 use crate::mm::Pages;
 use crate::mm::addr::{Uva, Va};

@@ -5,11 +5,11 @@ const EXPECTED: &[u8] = include_bytes!("../../../../userland/rootfs/hello.txt");
 pub fn smoke() {
     printlnk!("smoke-initarfs: start");
 
-    let mut file = fs::open("/hello.txt").expect("smoke-initarfs: failed to open /hello.txt");
+    let file = fs::FsContext::default()
+        .open("/hello.txt")
+        .expect("smoke-initarfs: failed to open /hello.txt");
     let mut buffer = [0; 64];
-    let len = file
-        .read(&mut buffer)
-        .expect("smoke-initarfs: failed to read /hello.txt");
+    let len = file.read(0, &mut buffer);
 
     assert_eq!(
         &buffer[..len],
@@ -17,8 +17,7 @@ pub fn smoke() {
         "smoke-initarfs: unexpected /hello.txt contents"
     );
     assert_eq!(
-        file.read(&mut buffer)
-            .expect("smoke-initarfs: failed to read /hello.txt at EOF"),
+        file.read(len, &mut buffer),
         0,
         "smoke-initarfs: read at EOF returned data"
     );

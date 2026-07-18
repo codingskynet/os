@@ -1,24 +1,24 @@
-pub use read::{Error as ReadError, read};
-pub use write::{Error as WriteError, write};
-
+mod close;
+mod exit;
+mod open;
 mod read;
 mod write;
 
-use core::{slice, str};
+use core::num::NonZeroUsize;
 
-use crate::arch::memory::UserMemoryGuard;
 use crate::arch::regs::GeneralRegs;
-use crate::kernel::scheduler::SCHEDULER;
+use crate::args_enum;
+use crate::kernel::file::FileDescriptor;
 use crate::kernel::thread::Thread;
-use crate::mm::addr::Uva;
-use crate::{arch, args_enum};
 
 args_enum! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Syscall(usize, a1: usize, a2: usize, a3: usize, a4: usize) {
-        0 => Exit(usize = a1),
-        1 => Write((usize, usize) = (a1, a2)),
-        2 => Read((usize, usize) = (a1, a2)),
+        0 => Exit(isize = a1 as isize),
+        1 => Write((FileDescriptor, usize, usize) = (a1.into(), a2, a3)),
+        2 => Read((FileDescriptor, usize, usize) = (a1.into(), a2, a3)),
+        3 => Open((usize, usize) = (a1, a2)),
+        4 => Close(FileDescriptor = a1.into()),
     }
 }
 
@@ -28,28 +28,56 @@ impl From<&GeneralRegs> for Syscall {
     }
 }
 
-/// Terminate the current thread with `code` and switch to the next runnable
-/// thread. Never returns.
-///
-/// Note for callers: invoking this from inside a kernel-thread entry closure
-/// skips the destructors of everything still live in that closure (there is
-/// no unwinding). Prefer returning from the closure and letting
-/// `_kernel_thread_start` exit on its behalf; see its doc comment.
-pub fn exit(code: usize) -> ! {
-    // Disable so the exit protocol (mark `Exited`, then switch away for the
-    // final time) cannot be interrupted by a timer preemption half-way
-    // through, which would context-switch a thread already marked `Exited`.
-    //
-    // There is deliberately no matching re-enable: this function never
-    // returns, so there is no prior interrupt state to restore. After
-    // `run_next` switches away, the next thread's saved sstatus (restored by
-    // the context switch) determines the interrupt state, and this thread is
-    // destroyed in `_after_switch` without ever resuming.
-    arch::asm::interrupt::disable();
+#[repr(C)]
+struct SyscallResult {
+    status: usize,
+    value: usize,
+}
 
-    Thread::with_current(|current| {
-        current.set_exit(code);
-    });
-    SCHEDULER.run_next();
-    unreachable!("exited thread resumed after scheduler switch")
+impl<T: Into<usize>, E: Into<NonZeroUsize>> From<core::result::Result<T, E>> for SyscallResult {
+    fn from(value: core::result::Result<T, E>) -> Self {
+        match value {
+            Ok(value) => Self::ok(value),
+            Err(status) => Self::err(status),
+        }
+    }
+}
+
+impl From<SyscallResult> for (usize, usize) {
+    fn from(value: SyscallResult) -> Self {
+        let SyscallResult { status, value } = value;
+        (status, value)
+    }
+}
+
+impl SyscallResult {
+    pub fn ok<T: Into<usize>>(value: T) -> Self {
+        Self {
+            status: 0,
+            value: value.into(),
+        }
+    }
+
+    pub fn err<E: Into<NonZeroUsize>>(status: E) -> Self {
+        Self {
+            status: status.into().get(),
+            value: 0,
+        }
+    }
+}
+
+impl Thread {
+    pub fn syscall(&mut self, syscall: Syscall) -> (usize, usize) {
+        let result: SyscallResult = match syscall {
+            Syscall::Exit(code) => self.exit(code),
+            Syscall::Write((fd, addr, len)) => self.write(fd, addr, len).into(),
+            Syscall::Read((fd, addr, len)) => self.read(fd, addr, len).into(),
+            Syscall::Open((addr, len)) => self.open(addr, len).into(),
+            Syscall::Close(fd) => self.close(fd).into(),
+            Syscall::Unknown(number) => {
+                panic!("unhandled ecall from U-mode: number={number}")
+            }
+        };
+        result.into()
+    }
 }

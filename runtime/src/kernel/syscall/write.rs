@@ -1,37 +1,40 @@
 use alloc::slice;
-use core::fmt::Write;
 
 use crate::arch::memory::UserMemoryGuard;
 use crate::arch::paging::Permission;
-use crate::kernel::console::CONSOLE;
+use crate::kernel::file::FileDescriptor;
 use crate::kernel::thread::Thread;
 use crate::mm::addr::Uva;
+use crate::nonzero_enum;
 
-type Result<T> = core::result::Result<T, Error>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(isize)]
-pub enum Error {
-    InvalidBuffer = -1,
-    InvalidUtf8 = -2,
-    Console = -3,
+nonzero_enum! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Error {
+        InvalidBuffer = 1,
+        BadFileDescriptor = 2,
+    }
 }
 
-pub fn write(addr: usize, len: usize) -> Result<()> {
-    if len == 0 {
-        return Ok(());
-    }
+impl Thread {
+    pub fn write(&mut self, fd: FileDescriptor, addr: usize, len: usize) -> Result<usize, Error> {
+        let Some(file) = self.files.get(fd) else {
+            return Err(Error::BadFileDescriptor);
+        };
+        if len == 0 {
+            return Ok(0);
+        }
 
-    let addr = Uva::new(addr).ok_or(Error::InvalidBuffer)?;
-    if !Thread::is_accessible(addr, len, Permission::R) {
-        return Err(Error::InvalidBuffer);
-    }
+        let addr = Uva::new(addr).ok_or(Error::InvalidBuffer)?;
+        if !self.mm.is_accessible(addr, len, Permission::R) {
+            return Err(Error::InvalidBuffer);
+        }
 
-    let _guard = UserMemoryGuard::new();
+        let _guard = UserMemoryGuard::new();
 
-    let bytes = unsafe { slice::from_raw_parts(addr.as_raw() as *const u8, len) };
-    match str::from_utf8(bytes) {
-        Ok(text) => CONSOLE.lock().write_str(text).map_err(|_| Error::Console),
-        Err(_) => Err(Error::InvalidUtf8),
+        // SAFETY: the complete range was checked above to be mapped readable user
+        // memory. `UserMemoryGuard` permits supervisor access for this scope, and
+        // the slice does not escape this function.
+        let buffer = unsafe { slice::from_raw_parts(addr.as_raw() as *const u8, len) };
+        Ok(file.lock().write(buffer))
     }
 }

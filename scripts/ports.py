@@ -226,9 +226,22 @@ def sync(port: Port) -> None:
             raise PortsError(f"{port.name}: empty commit cannot be exported: {commit[:12]}")
     with tempfile.TemporaryDirectory(prefix=f"ports-{port.name}-", dir=USERLAND_ROOT) as temporary:
         output = Path(temporary)
-        run(("git", "format-patch", "--no-signature", "--output-directory", str(output),
-             f"{port.rev}..HEAD"), cwd=port.dest, capture=True)
+        run(("git", "format-patch", "--no-signature", "--subject-prefix=PATCH",
+             "--output-directory", str(output), f"{port.rev}..HEAD"),
+            cwd=port.dest, capture=True)
         generated = sorted(output.glob("*.patch"))
+        for patch in generated:
+            contents = patch.read_text(encoding="utf-8")
+            contents, replacements = re.subn(
+                r"^Subject: \[PATCH(?: [0-9]+/[0-9]+)?\] ",
+                "Subject: ",
+                contents,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            if replacements != 1:
+                raise PortsError(f"{port.name}: cannot remove generated patch subject prefix")
+            patch.write_text(contents, encoding="utf-8")
         staging = output / "patches"
         staging.mkdir()
         for patch in generated:

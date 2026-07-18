@@ -17,3 +17,11 @@ pub trait Read {
     /// the entire buffer has been filled.
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Self::Error>;
 }
+
+/// Blocking byte-stream output with complete-write semantics.
+pub trait Write {
+    type Error;
+
+    /// Write every byte in `buffer`, returning the number written.
+    fn write(&mut self, buffer: &[u8]) -> Result<usize, Self::Error>;
+}

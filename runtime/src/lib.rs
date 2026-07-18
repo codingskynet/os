@@ -4,18 +4,16 @@
 //! initialization has finished.
 
 #![no_std]
-#![feature(allocator_api)]
 #![allow(clippy::forget_non_drop)]
-#![allow(unused)]
 
 extern crate alloc;
 
-pub mod dev;
-pub mod util;
-
 pub mod arch;
 pub mod debug;
+pub mod dev;
 pub mod fs;
 pub mod kernel;
 pub mod mm;
+pub mod util;
+
 mod panic;

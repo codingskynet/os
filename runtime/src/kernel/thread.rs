@@ -4,17 +4,16 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::mem::{self, ManuallyDrop};
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::arch;
-use crate::arch::paging::Permission;
 use crate::fs::FsContext;
+use crate::kernel::file::FileContext;
 use crate::kernel::scheduler::SCHEDULER;
-use crate::kernel::syscall;
 use crate::mm::MmContext;
-use crate::mm::addr::{Uva, Va};
+use crate::mm::addr::Va;
 
-pub fn spawn(entry: impl FnOnce() + Send + 'static) -> Arc<AtomicUsize> {
+pub fn spawn(entry: impl FnOnce() + Send + 'static) -> Arc<AtomicIsize> {
     let thread = Thread::new(entry);
     let exit_code = thread.exit_code().unwrap();
     SCHEDULER.push(thread);
@@ -63,10 +62,11 @@ pub enum ThreadState {
 pub struct Thread {
     state: ThreadState,
     switch: arch::switch::SwitchContext,
-    fs: Option<FsContext>,
-    mm: MmContext,
+    pub fs: FsContext,
+    pub mm: MmContext,
+    pub files: FileContext,
     entry: Option<Box<dyn FnOnce() + Send>>,
-    exit_code: Option<Arc<AtomicUsize>>, // todo: split RW?
+    exit_code: Option<Arc<AtomicIsize>>, // todo: split RW?
 }
 
 impl Thread {
@@ -80,11 +80,12 @@ impl Thread {
             let thread_ptr = thread.as_mut_ptr();
             ptr::addr_of_mut!((*thread_ptr).state).write(ThreadState::Ready);
             ptr::addr_of_mut!((*thread_ptr).switch).write(arch::switch::SwitchContext::default());
-            ptr::addr_of_mut!((*thread_ptr).fs).write(None);
-            ptr::addr_of_mut!((*thread_ptr).mm).write(MmContext::new());
+            ptr::addr_of_mut!((*thread_ptr).fs).write(FsContext::default());
+            ptr::addr_of_mut!((*thread_ptr).mm).write(MmContext::default());
+            ptr::addr_of_mut!((*thread_ptr).files).write(FileContext::default());
             ptr::addr_of_mut!((*thread_ptr).entry).write(Some(Box::new(entry)));
             ptr::addr_of_mut!((*thread_ptr).exit_code)
-                .write(Some(Arc::new(AtomicUsize::new(usize::MAX))));
+                .write(Some(Arc::new(AtomicIsize::new(isize::MIN))));
             thread.assume_init()
         };
 
@@ -105,11 +106,11 @@ impl Thread {
         s.offset(mem::size_of::<Self>())
     }
 
-    pub fn exit_code(&self) -> Option<Arc<AtomicUsize>> {
+    pub fn exit_code(&self) -> Option<Arc<AtomicIsize>> {
         self.exit_code.clone()
     }
 
-    pub fn set_exit(&mut self, code: usize) {
+    pub fn set_exit(&mut self, code: isize) {
         self.state = ThreadState::Exited;
         self.exit_code
             .take()
@@ -122,15 +123,15 @@ impl Thread {
         f(unsafe { &mut *Va::new(sp & !(mem::align_of::<Thread>() - 1)).as_mut_ptr() })
     }
 
-    pub fn is_accessible(addr: Uva, len: usize, permissions: Permission) -> bool {
-        let mut readable = false;
-        Self::with_current(|current| {
-            readable = current.mm.is_accessible(addr, len, permissions);
-        });
-        readable
+    pub fn fs_context(&self) -> &FsContext {
+        &self.fs
     }
 
-    pub(crate) fn replace_current_mm(mm: MmContext) {
+    pub fn file_context(&mut self) -> &mut FileContext {
+        &mut self.files
+    }
+
+    pub fn replace_current_mm(mm: MmContext) {
         Self::with_current(|current| {
             let old = mem::replace(&mut current.mm, mm);
             // SAFETY: the new context contains the shared kernel mappings and
@@ -163,7 +164,7 @@ impl Thread {
 
 pub extern "C" fn _kernel_thread_start(thread: &mut Thread) -> ! {
     thread.entry.take().unwrap()();
-    syscall::exit(0);
+    thread.exit(0);
 }
 
 /// Requeue or destroy the thread that just stopped running after a context

@@ -6,7 +6,7 @@ use core::convert::Infallible;
 use core::fmt;
 use core::ptr::{read_volatile, write_volatile};
 
-use super::Read;
+use super::{Read, Write};
 
 const REG_RBR: usize = 0x00; // Receiver Buffer Register (read)
 const REG_THR: usize = 0x00; // Transmitter Holding Register (write)
@@ -42,13 +42,22 @@ impl NS16550 {
 
 impl fmt::Write for NS16550 {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        for c in s.bytes() {
+        Write::write(self, s.as_bytes()).unwrap();
+        Ok(())
+    }
+}
+
+impl Write for NS16550 {
+    type Error = Infallible;
+
+    fn write(&mut self, buffer: &[u8]) -> Result<usize, Self::Error> {
+        for &byte in buffer {
             while unsafe { read_volatile(self.reg(REG_LSR)) } & LSR_THRE == 0 {
                 core::hint::spin_loop();
             }
-            unsafe { write_volatile(self.reg(REG_THR), c) };
+            unsafe { write_volatile(self.reg(REG_THR), byte) };
         }
-        Ok(())
+        Ok(buffer.len())
     }
 }
 

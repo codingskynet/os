@@ -1,10 +1,9 @@
 use tar_no_std::{ArchiveEntry, TarArchiveRef};
 
 use super::*;
-use crate::fs::file::Fnode;
 
 pub struct Tarfs {
-    entries: HashMap<Path, ArchiveEntry<'static>>,
+    entries: HashMap<AbsolutePathBuf, ArchiveEntry<'static>>,
 }
 
 impl From<&'static [u8]> for Tarfs {
@@ -15,7 +14,7 @@ impl From<&'static [u8]> for Tarfs {
                 .entries()
                 .map(|entry| {
                     (
-                        Path::from_str(entry.filename().as_str().unwrap()).unwrap(),
+                        AbsolutePath::ROOT.join(entry.filename().as_str().unwrap()),
                         entry,
                     )
                 })
@@ -25,9 +24,9 @@ impl From<&'static [u8]> for Tarfs {
 }
 
 impl Fs for Tarfs {
-    fn open(&self, path: &Path) -> Result<File> {
+    fn open(&self, path: &AbsolutePathBuf) -> Result<Box<dyn Fnode>> {
         match self.entries.get(path) {
-            Some(entry) => Ok(File::from_fnode(TarfsFnode::new(entry.data()))),
+            Some(entry) => Ok(Box::new(TarfsFnode::new(entry.data()))),
             None => Err(Error::NotFound),
         }
     }
@@ -44,13 +43,17 @@ impl<'a> TarfsFnode<'a> {
 }
 
 impl<'a> Fnode for TarfsFnode<'a> {
-    fn read(&self, offset: usize, buffer: &mut [u8]) -> Result<usize> {
+    fn read(&self, offset: usize, buffer: &mut [u8]) -> usize {
         let Some(data) = self.data.get(offset..) else {
-            return Ok(0);
+            return 0;
         };
 
         let len = data.len().min(buffer.len());
         buffer[..len].copy_from_slice(&data[..len]);
-        Ok(len)
+        len
+    }
+
+    fn write(&self, _offset: usize, _buffer: &[u8]) -> usize {
+        0
     }
 }

@@ -3,8 +3,8 @@ use core::sync::atomic::Ordering;
 use crate::fs;
 use crate::kernel::thread;
 
-const RUNNING: usize = usize::MAX;
-const EXPECTED_EXIT_CODE: usize = 39;
+const RUNNING: isize = isize::MIN;
+const EXPECTED_EXIT_CODE: isize = 39;
 
 pub fn smoke() {
     let exit_code = thread::spawn(|| {

@@ -1,0 +1,220 @@
+From 4c3da8292828f7fdb431b6712724844942ec250c Mon Sep 17 00:00:00 2001
+From: OS port importer <ports@localhost>
+Date: Sat, 18 Jul 2026 16:29:13 +0900
+Subject: feat: add file descriptor syscalls
+
+---
+ ports/os/README.md      | 10 +++++---
+ ports/os/main.c         | 55 ++++++++++++++++++++++++++++++++++++++---
+ ports/os/mpconfigport.h |  1 +
+ ports/os/os_syscall.h   | 31 +++++++++++++++++------
+ ports/os/uart_core.c    |  6 ++---
+ 5 files changed, 85 insertions(+), 18 deletions(-)
+
+diff --git a/ports/os/README.md b/ports/os/README.md
+index ce37ac2..fd093e4 100644
+--- a/ports/os/README.md
++++ b/ports/os/README.md
+@@ -4,12 +4,16 @@ This minimal port builds a freestanding RV64 ELF executable for the kernel in
+ this repository. It uses the kernel's user syscall ABI directly:
+ 
+ - `a0 = 0`, `a1 = status`: exit
+-- `a0 = 1`, `a1 = buffer`, `a2 = length`: console write
+-- `a0 = 2`, `a1 = buffer`, `a2 = length`: blocking console read
++- `a0 = 1`, `a1 = fd`, `a2 = buffer`, `a3 = length`: write
++- `a0 = 2`, `a1 = fd`, `a2 = buffer`, `a3 = length`: read
++- `a0 = 3`, `a1 = path`, `a2 = length`: open
++- `a0 = 4`, `a1 = fd`: close
+ 
+ The kernel enters `_start` with a prepared user stack and zero-filled BSS. The
+ port initializes `gp`, runs the standard friendly MicroPython REPL, and exits
+-through syscall 0 when the REPL finishes.
++through syscall 0 when the REPL finishes. Standard input, output, and error use
++file descriptors 0, 1, and 2. The file reader uses open/read/close, so scripts
++and modules stored in the kernel's init archive can be loaded by MicroPython.
+ 
+ ## Build
+ 
+diff --git a/ports/os/main.c b/ports/os/main.c
+index fd12920..d56675b 100644
+--- a/ports/os/main.c
++++ b/ports/os/main.c
+@@ -1,12 +1,14 @@
+ #ifndef NDEBUG
+ #include <stdio.h>
+ #endif
++#include <string.h>
+ 
+ #include "py/builtin.h"
+ #include "py/cstack.h"
+ #include "py/gc.h"
+ #include "py/lexer.h"
+ #include "py/mperrno.h"
++#include "py/reader.h"
+ #include "py/runtime.h"
+ #include "shared/runtime/gchelper.h"
+ #include "shared/runtime/pyexec.h"
+@@ -15,6 +17,32 @@
+ 
+ static char heap[MICROPY_HEAP_SIZE];
+ 
++typedef struct _os_reader_t {
++    int fd;
++    size_t len;
++    size_t pos;
++    byte buffer[32];
++} os_reader_t;
++
++static mp_uint_t os_reader_readbyte(void *data) {
++    os_reader_t *reader = data;
++    if (reader->pos == reader->len) {
++        intptr_t read = os_read(reader->fd, reader->buffer, sizeof(reader->buffer));
++        if (read <= 0) {
++            return MP_READER_EOF;
++        }
++        reader->len = read;
++        reader->pos = 0;
++    }
++    return reader->buffer[reader->pos++];
++}
++
++static void os_reader_close(void *data) {
++    os_reader_t *reader = data;
++    (void)os_close(reader->fd);
++    m_del_obj(os_reader_t, reader);
++}
++
+ int main(void) {
+     int stack_dummy;
+     mp_cstack_init_with_top(&stack_dummy, 0);
+@@ -33,13 +61,32 @@ void gc_collect(void) {
+ }
+ 
+ mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
+-    (void)filename;
+-    mp_raise_OSError(MP_ENOENT);
++    const char *path = qstr_str(filename);
++    intptr_t fd = os_open(path, strlen(path));
++    if (fd < 0) {
++        mp_raise_OSError_with_filename(MP_ENOENT, path);
++    }
++
++    os_reader_t *os_reader = m_new_obj(os_reader_t);
++    os_reader->fd = fd;
++    os_reader->len = 0;
++    os_reader->pos = 0;
++
++    mp_reader_t reader = {
++        .data = os_reader,
++        .readbyte = os_reader_readbyte,
++        .close = os_reader_close,
++    };
++    return mp_lexer_new(filename, reader);
+ }
+ 
+ mp_import_stat_t mp_import_stat(const char *path) {
+-    (void)path;
+-    return MP_IMPORT_STAT_NO_EXIST;
++    intptr_t fd = os_open(path, strlen(path));
++    if (fd < 0) {
++        return MP_IMPORT_STAT_NO_EXIST;
++    }
++    (void)os_close(fd);
++    return MP_IMPORT_STAT_FILE;
+ }
+ 
+ void nlr_jump_fail(void *val) {
+diff --git a/ports/os/mpconfigport.h b/ports/os/mpconfigport.h
+index 9783df6..652c012 100644
+--- a/ports/os/mpconfigport.h
++++ b/ports/os/mpconfigport.h
+@@ -14,6 +14,7 @@
+ #define MICROPY_HELPER_REPL               (1)
+ #define MICROPY_MODULE_FROZEN_MPY         (0)
+ #define MICROPY_ENABLE_EXTERNAL_IMPORT    (1)
++#define MICROPY_HAS_FILE_READER           (1)
+ 
+ #define MICROPY_ALLOC_PATH_MAX            (256)
+ 
+diff --git a/ports/os/os_syscall.h b/ports/os/os_syscall.h
+index 3f7e778..8695301 100644
+--- a/ports/os/os_syscall.h
++++ b/ports/os/os_syscall.h
+@@ -8,32 +8,49 @@ enum {
+     OS_SYSCALL_EXIT = 0,
+     OS_SYSCALL_WRITE = 1,
+     OS_SYSCALL_READ = 2,
++    OS_SYSCALL_OPEN = 3,
++    OS_SYSCALL_CLOSE = 4,
+ };
+ 
+-static inline intptr_t os_syscall(uintptr_t number, uintptr_t arg1, uintptr_t arg2) {
++enum {
++    OS_STDIN_FILENO = 0,
++    OS_STDOUT_FILENO = 1,
++    OS_STDERR_FILENO = 2,
++};
++
++static inline intptr_t os_syscall(uintptr_t number, uintptr_t arg1, uintptr_t arg2, uintptr_t arg3) {
+     register uintptr_t a0 __asm ("a0") = number;
+     register uintptr_t a1 __asm ("a1") = arg1;
+     register uintptr_t a2 __asm ("a2") = arg2;
++    register uintptr_t a3 __asm ("a3") = arg3;
+ 
+     __asm volatile (
+         "ecall"
+         : "+r" (a0)
+-        : "r" (a1), "r" (a2)
++        : "r" (a1), "r" (a2), "r" (a3)
+         : "memory"
+         );
+     return (intptr_t)a0;
+ }
+ 
+-static inline intptr_t os_read(void *buffer, size_t len) {
+-    return os_syscall(OS_SYSCALL_READ, (uintptr_t)buffer, len);
++static inline intptr_t os_read(int fd, void *buffer, size_t len) {
++    return os_syscall(OS_SYSCALL_READ, (uintptr_t)fd, (uintptr_t)buffer, len);
++}
++
++static inline intptr_t os_write(int fd, const void *buffer, size_t len) {
++    return os_syscall(OS_SYSCALL_WRITE, (uintptr_t)fd, (uintptr_t)buffer, len);
++}
++
++static inline intptr_t os_open(const char *path, size_t len) {
++    return os_syscall(OS_SYSCALL_OPEN, (uintptr_t)path, len, 0);
+ }
+ 
+-static inline uintptr_t os_write(const void *buffer, size_t len) {
+-    return (uintptr_t)os_syscall(OS_SYSCALL_WRITE, (uintptr_t)buffer, len);
++static inline intptr_t os_close(int fd) {
++    return os_syscall(OS_SYSCALL_CLOSE, (uintptr_t)fd, 0, 0);
+ }
+ 
+ static inline __attribute__((noreturn)) void os_exit(uintptr_t status) {
+-    (void)os_syscall(OS_SYSCALL_EXIT, status, 0);
++    (void)os_syscall(OS_SYSCALL_EXIT, status, 0, 0);
+     __builtin_unreachable();
+ }
+ 
+diff --git a/ports/os/uart_core.c b/ports/os/uart_core.c
+index 101c02d..ffc8c5d 100644
+--- a/ports/os/uart_core.c
++++ b/ports/os/uart_core.c
+@@ -10,14 +10,12 @@ int mp_hal_stdin_rx_chr(void) {
+     unsigned char c = 0;
+     // The kernel read blocks until the first byte is available.  Retry only on
+     // an ABI-level error; a successful one-byte request always returns 1.
+-    while (os_read(&c, 1) != 1) {
++    while (os_read(OS_STDIN_FILENO, &c, 1) != 1) {
+     }
+     return c;
+ }
+ 
+ // Send string of given length
+ mp_uint_t mp_hal_stdout_tx_strn(const char *str, mp_uint_t len) {
+-    // Unlike POSIX write, the kernel ABI returns zero on complete success and
+-    // a positive error code on failure.
+-    return os_write(str, len) == 0 ? len : 0;
++    return os_write(OS_STDOUT_FILENO, str, len) == (intptr_t)len ? len : 0;
+ }

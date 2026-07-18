@@ -5,7 +5,6 @@
 //! order, so [`Pages::size`] reports the actual block size rather than the
 //! original request.
 
-use core::mem;
 use core::num::NonZeroUsize;
 use core::ops::Deref;
 use core::sync::atomic::{Ordering, fence};

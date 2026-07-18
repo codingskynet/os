@@ -6,7 +6,7 @@ use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
 use super::*;
-use crate::mm::addr::{Pa, Va};
+use crate::mm::addr::Va;
 use crate::util::linked_list::{Node, Pointer};
 
 /// Marker type for pages owned by the slab allocator.
