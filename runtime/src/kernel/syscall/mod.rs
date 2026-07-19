@@ -1,5 +1,4 @@
 mod close;
-mod exit;
 mod open;
 mod read;
 mod write;
@@ -9,7 +8,7 @@ use core::num::NonZeroUsize;
 use crate::arch::regs::GeneralRegs;
 use crate::args_enum;
 use crate::kernel::file::FileDescriptor;
-use crate::kernel::thread::Thread;
+use crate::kernel::thread::{self, CurrentThread};
 
 args_enum! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,18 +65,20 @@ impl SyscallResult {
     }
 }
 
-impl Thread {
-    pub fn syscall(&mut self, syscall: Syscall) -> (usize, usize) {
-        let result: SyscallResult = match syscall {
-            Syscall::Exit(code) => self.exit(code),
-            Syscall::Write((fd, addr, len)) => self.write(fd, addr, len).into(),
-            Syscall::Read((fd, addr, len)) => self.read(fd, addr, len).into(),
-            Syscall::Open((addr, len)) => self.open(addr, len).into(),
-            Syscall::Close(fd) => self.close(fd).into(),
-            Syscall::Unknown(number) => {
-                panic!("unhandled ecall from U-mode: number={number}")
-            }
-        };
-        result.into()
-    }
+pub fn handle(syscall: Syscall) -> (usize, usize) {
+    let result: SyscallResult = match syscall {
+        Syscall::Exit(code) => thread::exit(code),
+        Syscall::Write((fd, addr, len)) => {
+            CurrentThread::with_mut(|thread| thread.write(fd, addr, len)).into()
+        }
+        Syscall::Read((fd, addr, len)) => {
+            CurrentThread::with_mut(|thread| thread.read(fd, addr, len)).into()
+        }
+        Syscall::Open((addr, len)) => {
+            CurrentThread::with_mut(|thread| thread.open(addr, len)).into()
+        }
+        Syscall::Close(fd) => CurrentThread::with_mut(|thread| thread.close(fd)).into(),
+        Syscall::Unknown(number) => panic!("unhandled ecall from U-mode: number={number}"),
+    };
+    result.into()
 }

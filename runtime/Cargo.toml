@@ -10,13 +10,25 @@ test = false
 workspace = true
 
 [features]
-smoke = ["smoke-allocator", "smoke-initarfs", "smoke-page-fault", "smoke-kernel-thread", "smoke-floating-point", "smoke-userland"]
+smoke = [
+    "smoke-allocator",
+    "smoke-initarfs",
+    "smoke-page-fault",
+    "smoke-kernel-thread",
+    "smoke-floating-point",
+    "smoke-userland"
+]
+
 smoke-allocator = []
 smoke-floating-point = []
 smoke-initarfs = []
 smoke-kernel-thread = []
 smoke-page-fault = []
 smoke-userland = []
+
+# Destructive tests, each run in its own QEMU instance.
+smoke-kernel-stack-overflow = []
+smoke-user-trap-stack-overflow = []
 
 [dependencies]
 arrayvec.workspace = true

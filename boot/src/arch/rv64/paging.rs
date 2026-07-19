@@ -32,7 +32,7 @@ use runtime::util::consts::*;
 /// on the boot hart before normal runtime initialization.
 #[unsafe(link_section = ".init.text")]
 pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const u8) -> ! {
-    const L2_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(1 * G).unwrap();
+    const L2_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(1 * Gi).unwrap();
     const L1_PAGE_SIZE: NonZeroUsize = HUGE_PAGE_SIZE;
 
     // Temporary Sv39 root page table using 1GiB leaf mapping for whole memory

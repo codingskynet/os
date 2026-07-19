@@ -98,3 +98,29 @@ jobs:
 
           ! grep -q "Traceback (most recent call last)" qemu-micropython.log
           ! grep -q "kernel panic" qemu-micropython.log
+
+      - name: Run kernel stack guard smoke test in QEMU
+        run: |
+          bash scripts/run-until-output.sh \
+            120 \
+            qemu-kernel-stack-overflow.log \
+            "message: kernel stack overflow" \
+            make run DEBUG=1 FEATURES=smoke-kernel-stack-overflow
+
+          grep -q "smoke-kernel-stack-overflow: trigger guard" qemu-kernel-stack-overflow.log
+          grep -q "StorePage(Va(0xffff_ffff_e[0-9a-f_]*0ff0))" qemu-kernel-stack-overflow.log
+          grep -q "kernel panic" qemu-kernel-stack-overflow.log
+          grep -q "kernel stack overflow" qemu-kernel-stack-overflow.log
+
+      - name: Run U-mode trap stack guard smoke test in QEMU
+        run: |
+          bash scripts/run-until-output.sh \
+            120 \
+            qemu-user-trap-stack-overflow.log \
+            "message: kernel stack overflow" \
+            make run DEBUG=1 FEATURES=smoke-user-trap-stack-overflow
+
+          grep -q "smoke-user-trap-stack-overflow: trigger U-mode guard" qemu-user-trap-stack-overflow.log
+          grep -q "cause=Exception(EnvironmentCallFromUMode)" qemu-user-trap-stack-overflow.log
+          grep -q "kernel panic" qemu-user-trap-stack-overflow.log
+          grep -q "kernel stack overflow" qemu-user-trap-stack-overflow.log

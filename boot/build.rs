@@ -1,5 +1,6 @@
-#![allow(unused)]
 #![allow(clippy::large_stack_frames)]
+#![allow(non_upper_case_globals)]
+#![allow(unused)]
 
 mod util {
     pub mod consts {

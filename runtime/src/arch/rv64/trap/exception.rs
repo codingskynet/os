@@ -1,8 +1,7 @@
 use crate::arch::trap::TrapFrame;
 use crate::arch::{Exception, PageFaultReason};
 use crate::debug;
-use crate::kernel::syscall::Syscall;
-use crate::kernel::thread::Thread;
+use crate::kernel::syscall::{self, Syscall};
 
 pub fn handle_exception(frame: &mut TrapFrame, exception: Exception) {
     match exception {
@@ -44,7 +43,6 @@ fn handle_ecall_from_umode(frame: &mut TrapFrame) {
     let syscall = Syscall::from(&frame.regs);
     debug!("user program calls {syscall:?}");
 
-    Thread::with_current(|thread| (frame.regs.a0, frame.regs.a1) = thread.syscall(syscall));
-
+    (frame.regs.a0, frame.regs.a1) = syscall::handle(syscall);
     frame.sepc = frame.sepc.offset(4usize);
 }

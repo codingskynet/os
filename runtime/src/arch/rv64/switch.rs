@@ -27,10 +27,9 @@ pub struct SwitchContext {
 }
 
 impl SwitchContext {
-    pub fn as_kernel_thread_trampoline(&mut self, sp: Va, entry: Va) {
+    pub fn as_kernel_thread_trampoline(&mut self, sp: Va) {
         self.ra = _kernel_thread_trampoline as *const u8 as usize;
         self.sp = sp.as_raw();
-        self.a0 = entry.as_raw();
         self.sstatus = Sstatus::SIE.bits(); // start from interrupt-enabled
     }
 }
@@ -169,10 +168,15 @@ macro_rules! switch_context_naked_asm {
 ///
 /// `current` must point to the switch context of the running thread, `next`
 /// must point to the switch context of a different live thread, and `prev` must
-/// be the `Thread` that owns `current`. Both thread allocations must remain
-/// valid until their saved contexts are resumed or `after_switch` observes that
-/// one has exited. This routine restores `next`, activates its page table
-/// through `after_switch`, then returns into `next`'s saved `ra`.
+/// be the `Thread` that owns `current`. Before calling this routine, the caller
+/// must activate the memory context owned by the `Thread` containing `next` and
+/// install that `Thread` in the global current-thread owner. The active page
+/// table must keep the switch code, both `Thread` allocations, the outgoing
+/// kernel stack until `sp` is restored, and the incoming kernel stack mapped
+/// throughout the handoff. Both allocations must remain valid until their saved
+/// contexts are resumed or `_after_switch` observes that one exited. This
+/// routine only saves and restores architectural context before returning into
+/// `next`'s saved `ra`; it does not activate a page table.
 #[unsafe(naked)]
 pub unsafe extern "C" fn _switch(
     _current: *mut SwitchContext,
@@ -275,9 +279,10 @@ pub unsafe extern "C" fn _switch_to(_next: *const SwitchContext) -> ! {
 ///
 /// # Safety
 ///
-/// This function is entered only through a prepared `SwitchContext`; `a0` must
-/// contain a valid `Thread` pointer and `sp` must already point at that
-/// thread's kernel stack.
+/// This function is entered only through a prepared `SwitchContext`; `sp` must
+/// point at the new thread's kernel stack. The thread itself is resolved
+/// through [`crate::kernel::thread::CurrentThread`], so no argument register
+/// carries a `Thread` pointer.
 #[unsafe(naked)]
 pub unsafe extern "C" fn _kernel_thread_trampoline() -> ! {
     naked_asm!(

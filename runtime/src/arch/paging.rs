@@ -57,28 +57,12 @@ impl PageTable {
             return false;
         }
 
-        let mut flags: PteFlags = permissions.into();
-        let va = match va.into() {
-            VarVa::User(uva) => {
-                flags |= PteFlags::U;
-                uva.into_va()
-            }
-            VarVa::Kernel(va) => va,
-        };
-
-        let mut entry = self
-            .cursor()
-            .into_entry(vpn2(va))
-            .or_insert()
-            .into_entry(vpn1(va))
-            .or_insert()
-            .into_entry(vpn0(va));
-        if entry.is_valid() {
-            return false;
-        }
-
-        entry.mut_address(pa).mut_flags(flags | PteFlags::V);
-        true
+        map_in_table(
+            unsafe { &mut *self.0.as_mut_ptr::<RawPageTable>() },
+            va.into(),
+            pa,
+            permissions,
+        )
     }
 
     pub fn address(&self) -> Pa {
@@ -88,12 +72,64 @@ impl PageTable {
     pub fn as_ptr(&self) -> &RawPageTable {
         unsafe { &*self.0.as_ptr() }
     }
+}
 
-    fn cursor(&mut self) -> PageTableCursor<'_> {
-        PageTableCursor {
-            table: unsafe { &mut *self.0.as_mut_ptr() },
-        }
+/// Map one supervisor page in the active address space.
+///
+/// # Safety
+///
+/// Kernel page-table subtrees are shared by all memory contexts. The caller
+/// must serialize this operation with every other mutation of the same subtree.
+pub unsafe fn map_kernel_page_to_active(
+    va: crate::mm::addr::Va,
+    pa: Pa,
+    permissions: Permission,
+) -> bool {
+    let table = unsafe { &mut *crate::arch::asm::page_table::active() };
+    map_in_table(table, VarVa::Kernel(va), pa, permissions)
+}
+
+/// Remove one 4 KiB leaf mapping from the active address space.
+///
+/// # Safety
+///
+/// The caller must serialize this operation with every other mutation of the
+/// shared kernel page-table subtree and ensure the mapping is no longer in use.
+pub unsafe fn unmap_page_from_active(va: crate::mm::addr::Va) -> Option<Pa> {
+    let root = unsafe { &mut *crate::arch::asm::page_table::active() };
+    let l1 = root.entry(vpn2(va)).page_table_mut()?;
+    let l0 = l1.entry(vpn1(va)).page_table_mut()?;
+    let entry = l0.entry(vpn0(va));
+    if !entry.is_valid() || !entry.is_leaf() {
+        return None;
     }
+    let pa = entry.address();
+    entry.clear();
+    Some(pa)
+}
+
+fn map_in_table(table: &mut RawPageTable, va: VarVa, pa: Pa, permissions: Permission) -> bool {
+    let mut flags: PteFlags = permissions.into();
+    let va = match va {
+        VarVa::User(uva) => {
+            flags |= PteFlags::U;
+            uva.into_va()
+        }
+        VarVa::Kernel(va) => va,
+    };
+
+    let mut entry = PageTableCursor { table }
+        .into_entry(vpn2(va))
+        .or_insert()
+        .into_entry(vpn1(va))
+        .or_insert()
+        .into_entry(vpn0(va));
+    if entry.is_valid() {
+        return false;
+    }
+
+    entry.mut_address(pa).mut_flags(flags | PteFlags::V);
+    true
 }
 
 impl Drop for PageTable {

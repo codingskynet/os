@@ -12,6 +12,12 @@ pub mod page_fault;
 #[cfg(feature = "smoke-kernel-thread")]
 pub mod kernel_thread;
 
+#[cfg(feature = "smoke-kernel-stack-overflow")]
+pub mod kernel_stack_overflow;
+
+#[cfg(feature = "smoke-user-trap-stack-overflow")]
+pub mod user_trap_stack_overflow;
+
 #[cfg(feature = "smoke-floating-point")]
 pub mod floating_point;
 

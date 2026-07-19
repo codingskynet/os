@@ -9,21 +9,20 @@ use elf::endian::LittleEndian;
 use elf::file::Class;
 
 use super::{Error, Result};
-use crate::arch;
 use crate::arch::consts::{LOWER_CANONICAL_END, PAGE_SIZE};
 use crate::arch::paging::Permission;
 use crate::fs::{AbsolutePath, MOUNTS};
-use crate::kernel::thread::Thread;
+use crate::kernel::thread::CurrentThread;
 use crate::mm::addr::{Uva, Va};
 use crate::mm::{MmContext, Pages};
-use crate::util::consts::M;
+use crate::util::consts::Mi;
 
 const USER_STACK_PAGES: usize = 16;
 const USER_STACK_TOP: usize = LOWER_CANONICAL_END - PAGE_SIZE.get();
 const USER_STACK_START: usize = USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE.get();
 
 // TODO: Move the maximum stack size and guard size into process configuration.
-const USER_STACK_MAX_SIZE: usize = 8 * M;
+const USER_STACK_MAX_SIZE: usize = 8 * Mi;
 const USER_STACK_GUARD_SIZE: usize = 256 * PAGE_SIZE.get();
 const USER_STACK_LIMIT: usize = USER_STACK_TOP - USER_STACK_MAX_SIZE;
 const USER_STACK_GUARD_START: usize = USER_STACK_LIMIT - USER_STACK_GUARD_SIZE;
@@ -33,12 +32,12 @@ pub fn kernel_exec(path: &str) -> Result<Infallible> {
     let (mm, entry) = load_elf(&image)?;
     drop(image);
 
-    Thread::replace_current_mm(mm);
+    CurrentThread::replace_mm(mm);
 
     // SAFETY: the ELF entry was checked to lie in an executable PT_LOAD,
     // the stack and load pages are present with U permissions, and `mm` is now
     // the current thread's active, owned address space.
-    unsafe { arch::trap::enter_user(entry, Va::new(USER_STACK_TOP)) }
+    unsafe { CurrentThread::enter_user(entry, Va::new(USER_STACK_TOP)) }
 }
 
 #[allow(clippy::large_stack_frames)]
