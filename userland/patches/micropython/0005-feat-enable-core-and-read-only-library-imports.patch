@@ -1,0 +1,127 @@
+From 3f50adde32f1d165ac560e23bbc4165a6f55fc36 Mon Sep 17 00:00:00 2001
+From: OS port importer <ports@localhost>
+Date: Sat, 18 Jul 2026 18:16:04 +0900
+Subject: feat: enable core and read-only library imports
+
+---
+ ports/os/README.md      |  7 +++++++
+ ports/os/main.c         | 35 ++++++++++++++++++++++++++++++-----
+ ports/os/mpconfigport.h | 10 ++++++----
+ 3 files changed, 43 insertions(+), 9 deletions(-)
+
+diff --git a/ports/os/README.md b/ports/os/README.md
+index cba532f..a97452f 100644
+--- a/ports/os/README.md
++++ b/ports/os/README.md
+@@ -19,6 +19,13 @@ through syscall 0 when the REPL finishes. Standard input, output, and error use
+ file descriptors 0, 1, and 2. The file reader uses open/read/close, so scripts
+ and modules stored in the kernel's init archive can be loaded by MicroPython.
+ 
++The core MicroPython library modules are compiled into the executable. In
++addition to the current directory, the importer searches `/lib` for read-only
++Python modules. Both `/lib/example.py` and packages such as
++`/lib/example/__init__.py` can therefore be imported directly from the init
++archive. General-purpose `open()` file objects are not implemented yet; the
++read-only path currently applies to the module importer.
++
+ ## Build
+ 
+ Install Zig once; it supplies the RISC-V cross compiler and target headers, so
+diff --git a/ports/os/main.c b/ports/os/main.c
+index 63f205c..8f8e162 100644
+--- a/ports/os/main.c
++++ b/ports/os/main.c
+@@ -8,6 +8,7 @@
+ #include "py/gc.h"
+ #include "py/lexer.h"
+ #include "py/mperrno.h"
++#include "py/objlist.h"
+ #include "py/reader.h"
+ #include "py/runtime.h"
+ #include "shared/runtime/gchelper.h"
+@@ -43,12 +44,22 @@ static void os_reader_close(void *data) {
+     m_del_obj(os_reader_t, reader);
+ }
+ 
++static bool os_path_exists(const char *path) {
++    os_syscall_result_t result = os_open(path, strlen(path));
++    if (result.status != 0) {
++        return false;
++    }
++    (void)os_close(result.value);
++    return true;
++}
++
+ int main(void) {
+     int stack_dummy;
+     mp_cstack_init_with_top(&stack_dummy, 0);
+ 
+     gc_init(heap, heap + sizeof(heap));
+     mp_init();
++    mp_obj_list_append(mp_sys_path, mp_obj_new_str("/lib", 4));
+     pyexec_friendly_repl();
+     mp_deinit();
+     return 0;
+@@ -81,13 +92,27 @@ mp_lexer_t *mp_lexer_new_from_file(qstr filename) {
+ }
+ 
+ mp_import_stat_t mp_import_stat(const char *path) {
+-    os_syscall_result_t result = os_open(path, strlen(path));
+-    if (result.status != 0) {
+-        return MP_IMPORT_STAT_NO_EXIST;
++    static const char package_init[] = "/__init__.py";
++    size_t path_len = strlen(path);
++    if (path_len + sizeof(package_init) <= MICROPY_ALLOC_PATH_MAX) {
++        char init_path[MICROPY_ALLOC_PATH_MAX];
++        memcpy(init_path, path, path_len);
++        memcpy(init_path + path_len, package_init, sizeof(package_init));
++        if (os_path_exists(init_path)) {
++            return MP_IMPORT_STAT_DIR;
++        }
+     }
+-    (void)os_close(result.value);
+-    return MP_IMPORT_STAT_FILE;
++
++    return os_path_exists(path) ? MP_IMPORT_STAT_FILE : MP_IMPORT_STAT_NO_EXIST;
++}
++
++mp_obj_t mp_builtin_open(size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) {
++    (void)n_args;
++    (void)args;
++    (void)kwargs;
++    mp_raise_OSError(MP_EPERM);
+ }
++MP_DEFINE_CONST_FUN_OBJ_KW(mp_builtin_open_obj, 1, mp_builtin_open);
+ 
+ void nlr_jump_fail(void *val) {
+     (void)val;
+diff --git a/ports/os/mpconfigport.h b/ports/os/mpconfigport.h
+index 652c012..8097e3d 100644
+--- a/ports/os/mpconfigport.h
++++ b/ports/os/mpconfigport.h
+@@ -2,8 +2,9 @@
+ 
+ // options to control how MicroPython is built
+ 
+-// Use the minimal starting configuration (disables all optional features).
+-#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_MINIMUM)
++// Enable MicroPython's core built-in modules while keeping platform-dependent
++// modules out of this freestanding port.
++#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES)
+ 
+ // You can disable the built-in MicroPython compiler by setting the following
+ // config option to 0.  If you do this then you won't get a REPL prompt, but you
+@@ -21,10 +22,11 @@
+ // Use the minimum headroom in the chunk allocator for parse nodes.
+ #define MICROPY_ALLOC_PARSE_CHUNK_INIT    (16)
+ 
+-// Disable all optional sys module features.
++// Keep argv disabled, but expose sys.path so read-only modules in the init
++// archive can be discovered below /lib.
+ #define MICROPY_PY_SYS_MODULES            (0)
+ #define MICROPY_PY_SYS_EXIT               (0)
+-#define MICROPY_PY_SYS_PATH               (0)
++#define MICROPY_PY_SYS_PATH               (1)
+ #define MICROPY_PY_SYS_ARGV               (0)
+ 
+ // type definitions for the specific machine

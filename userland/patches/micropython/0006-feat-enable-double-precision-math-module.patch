@@ -1,0 +1,115 @@
+From a960a7760c8dead4b8d6bb46fdef25085c703fc7 Mon Sep 17 00:00:00 2001
+From: OS port importer <ports@localhost>
+Date: Sat, 18 Jul 2026 18:28:16 +0900
+Subject: feat: enable double-precision math module
+
+---
+ ports/os/Makefile       | 10 ++++++++++
+ ports/os/README.md      |  3 ++-
+ ports/os/math_shims.c   | 27 +++++++++++++++++++++++++++
+ ports/os/mpconfigport.h |  4 ++++
+ 4 files changed, 43 insertions(+), 1 deletion(-)
+ create mode 100644 ports/os/math_shims.c
+
+diff --git a/ports/os/Makefile b/ports/os/Makefile
+index 9d830ae..ce6db62 100644
+--- a/ports/os/Makefile
++++ b/ports/os/Makefile
+@@ -22,6 +22,9 @@ MICROPY_ROM_TEXT_COMPRESSION ?= 1
+ 
+ # include py core make definitions
+ include $(TOP)/py/py.mk
++include $(TOP)/extmod/extmod.mk
++.DEFAULT_GOAL := all
++$(BUILD)/lib/libm_dbl/__rem_pio2_large.o: CFLAGS += -Wno-unknown-warning-option
+ 
+ INC += -I.
+ INC += -I$(TOP)
+@@ -59,6 +62,7 @@ CXXFLAGS += $(filter-out -std=c99,$(CFLAGS))
+ 
+ SRC_C = \
+ 	main.c \
++	math_shims.c \
+ 	uart_core.c \
+ 	shared/libc/printf.c \
+ 	shared/libc/string0.c \
+@@ -72,11 +76,17 @@ SRC_S_LOWER = shared/runtime/gchelper_rv64i.s
+ 
+ SRC_QSTR += shared/readline/readline.c shared/runtime/pyexec.c
+ 
++LIBM_SRC_C += $(filter-out lib/libm_dbl/copysign.c,$(SRC_LIB_LIBM_DBL_C))
++LIBM_SRC_C += $(SRC_LIB_LIBM_DBL_SQRT_SW_C)
++
+ OBJ += $(PY_CORE_O)
+ OBJ += $(addprefix $(BUILD)/, $(SRC_C:.c=.o))
+ OBJ += $(addprefix $(BUILD)/, $(SRC_S:.S=.o))
+ OBJ += $(addprefix $(BUILD)/, $(SRC_S_LOWER:.s=.o))
+ OBJ += $(addprefix $(BUILD)/, $(SRC_CXX:.cpp=.o))
++OBJ += $(addprefix $(BUILD)/, $(LIBM_SRC_C:.c=.o))
++
++SRC_QSTR += $(LIBM_SRC_C)
+ 
+ .PHONY: install
+ 
+diff --git a/ports/os/README.md b/ports/os/README.md
+index a97452f..4d2725d 100644
+--- a/ports/os/README.md
++++ b/ports/os/README.md
+@@ -19,7 +19,8 @@ through syscall 0 when the REPL finishes. Standard input, output, and error use
+ file descriptors 0, 1, and 2. The file reader uses open/read/close, so scripts
+ and modules stored in the kernel's init archive can be loaded by MicroPython.
+ 
+-The core MicroPython library modules are compiled into the executable. In
++The core MicroPython library modules, including double-precision `math`, are
++compiled into the executable. In
+ addition to the current directory, the importer searches `/lib` for read-only
+ Python modules. Both `/lib/example.py` and packages such as
+ `/lib/example/__init__.py` can therefore be imported directly from the init
+diff --git a/ports/os/math_shims.c b/ports/os/math_shims.c
+new file mode 100644
+index 0000000..5b12192
+--- /dev/null
++++ b/ports/os/math_shims.c
+@@ -0,0 +1,27 @@
++#include <stdint.h>
++
++typedef union _os_double_bits_t {
++    double value;
++    uint64_t bits;
++} os_double_bits_t;
++
++double fabs(double value) {
++    os_double_bits_t bits = {.value = value};
++    bits.bits &= UINT64_C(0x7fffffffffffffff);
++    return bits.value;
++}
++
++double copysign(double magnitude, double sign) {
++    os_double_bits_t magnitude_bits = {.value = magnitude};
++    os_double_bits_t sign_bits = {.value = sign};
++    magnitude_bits.bits =
++        (magnitude_bits.bits & UINT64_C(0x7fffffffffffffff)) |
++        (sign_bits.bits & UINT64_C(0x8000000000000000));
++    return magnitude_bits.value;
++}
++
++double nan(const char *tag) {
++    (void)tag;
++    os_double_bits_t value = {.bits = UINT64_C(0x7ff8000000000000)};
++    return value.value;
++}
+diff --git a/ports/os/mpconfigport.h b/ports/os/mpconfigport.h
+index 8097e3d..9d80c60 100644
+--- a/ports/os/mpconfigport.h
++++ b/ports/os/mpconfigport.h
+@@ -11,6 +11,10 @@
+ // will still be able to execute pre-compiled scripts, compiled with mpy-cross.
+ #define MICROPY_ENABLE_COMPILER     (1)
+ 
++#define MICROPY_FLOAT_IMPL                (MICROPY_FLOAT_IMPL_DOUBLE)
++#define MICROPY_FLOAT_FORMAT_IMPL         (MICROPY_FLOAT_FORMAT_IMPL_APPROX)
++#define MICROPY_FLOAT_USE_NATIVE_FLT16    (0)
++
+ #define MICROPY_ENABLE_GC                 (1)
+ #define MICROPY_HELPER_REPL               (1)
+ #define MICROPY_MODULE_FROZEN_MPY         (0)

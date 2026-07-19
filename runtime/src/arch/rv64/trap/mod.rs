@@ -49,13 +49,13 @@ mod exception;
 use core::arch::naked_asm;
 use core::mem::{offset_of, size_of};
 
-use bitflags::bitflags;
-
 use super::regs::GeneralRegs;
+use super::{Exception, Interrupt, Scause, Sstatus, TrapCause};
+use crate::arch::asm::floating_point;
 use crate::arch::timer::handle_timer;
-use crate::arch::trap::exception::{PageFaultReason, handle_exception};
+use crate::arch::trap::exception::handle_exception;
+use crate::asm;
 use crate::mm::addr::Va;
-use crate::{args_enum, asm};
 
 pub fn init() {
     unsafe {
@@ -66,6 +66,7 @@ pub fn init() {
             options(nostack, preserves_flags),
         );
     }
+    floating_point::disable();
 }
 
 /// Leave S-mode and begin a freshly loaded program in U-mode.
@@ -91,7 +92,7 @@ pub unsafe extern "C" fn enter_user(_entry: Va, _user_sp: Va) -> ! {
         "li t0, {clear}",
         "csrc sstatus, t0",
         "csrw sscratch, sp",
-        "li t0, {spie}",
+        "li t0, {user_status}",
         "csrs sstatus, t0",
         "mv sp, a1",
         zero_regs!(
@@ -101,8 +102,8 @@ pub unsafe extern "C" fn enter_user(_entry: Va, _user_sp: Va) -> ! {
             s0, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11,
         ),
         "sret",
-        clear = const Sstatus::SPP.bits() | Sstatus::SIE.bits(),
-        spie = const Sstatus::SPIE.bits(),
+        clear = const Sstatus::SPP.bits() | Sstatus::SIE.bits() | Sstatus::FS.bits(),
+        user_status = const Sstatus::SPIE.bits() | Sstatus::FS_INITIAL.bits(),
     )
 }
 
@@ -161,6 +162,11 @@ pub unsafe extern "C" fn _trap_entry() -> ! {
                     "csrr t0, sstatus",
                     // Save status so the handler can inspect or edit it.
                     "sd t0, {sstatus}(sp)",
+                    // U-mode may use the FPU, but ordinary kernel code must
+                    // fault on every FP instruction. Preserve the user's FS
+                    // bits in the frame and run the handler with FS=Off.
+                    "li t1, {fs}",
+                    "csrc sstatus, t1",
                     // SPP distinguishes the interrupted privilege for sp save.
                     "andi t1, t0, {spp}",
                     "bnez t1, 2f",
@@ -236,6 +242,7 @@ pub unsafe extern "C" fn _trap_entry() -> ! {
                 frame_size = const size_of::<TrapFrame>(),
                 saved_sp = const offset_of!(TrapFrame, regs.sp),
                 spp = const Sstatus::SPP.bits(),
+                fs = const Sstatus::FS.bits(),
                 $(
                     $reg = const offset_of!(TrapFrame, regs.$reg),
                 )+
@@ -288,128 +295,5 @@ extern "C" fn _trap_handler(frame: &mut TrapFrame) {
             "unhandled interrupt: {:?}, sepc={}, stval={:#x}",
             interrupt, frame.sepc, frame.stval
         ),
-    }
-}
-
-bitflags! {
-    /// Decoded bits from the RISC-V supervisor status register, `sstatus`.
-    ///
-    /// `sstatus` is saved on trap entry so the handler can inspect the
-    /// interrupted privilege/interrupt state and optionally edit the state that
-    /// `sret` will restore.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    #[repr(transparent)]
-    pub struct Sstatus: usize {
-        /// Supervisor interrupt enable for normal S-mode execution.
-        ///
-        /// Hardware clears SIE on trap entry. On `sret`, SIE is restored from
-        /// SPIE.
-        const SIE = 1 << 1;
-
-        /// Previous supervisor interrupt enable.
-        ///
-        /// Hardware copies the pre-trap SIE value here on trap entry. `sret`
-        /// copies SPIE back to SIE.
-        const SPIE = 1 << 5;
-
-        /// Previous privilege mode.
-        ///
-        /// Clear means the trap came from U-mode; set means it came from
-        /// S-mode. `sret` uses this bit to choose the return privilege.
-        const SPP = 1 << 8;
-
-        /// Permit S-mode loads/stores to pages marked user-accessible.
-        const SUM = 1 << 18;
-
-        /// Make executable pages readable by S-mode loads.
-        const MXR = 1 << 19;
-
-        /// Summary dirty bit for extension state such as floating point or
-        /// vector state.
-        const SD = 1 << (usize::BITS as usize - 1);
-    }
-}
-
-/// A decoded RISC-V supervisor trap cause register, `scause`.
-///
-/// The most-significant bit reports whether the trap is an interrupt. The
-/// remaining bits hold the exception or interrupt cause code defined by the
-/// privileged architecture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct Scause(usize);
-
-impl Scause {
-    const INTERRUPT_BIT: usize = 1 << (usize::BITS as usize - 1);
-
-    pub const fn is_interrupt(self) -> bool {
-        self.0 & Self::INTERRUPT_BIT != 0
-    }
-
-    pub const fn code(self) -> usize {
-        self.0 & !Self::INTERRUPT_BIT
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TrapCause {
-    Exception(Exception),
-    Interrupt(Interrupt),
-}
-
-args_enum! {
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    #[doc = concat!(
-        "Standard synchronous exception codes reported in `scause`.\n\n",
-        "The numeric codes come from RISC-V Privileged ISA ",
-        riscv_privileged_isa_version!(),
-        "'s [`scause` register] definition. Some exception variants also ",
-        "carry a decoded `stval` payload. That payload interpretation follows ",
-        "the [`stval` register] description: address/page/access faults use it ",
-        "as a trap-related virtual address when provided, illegal-instruction ",
-        "traps may use it for instruction bits, and environment calls do not ",
-        "use it.\n\n",
-        "[`scause` register]: ",
-        riscv_supervisor_doc_url!("#scause"),
-        "\n",
-        "[`stval` register]: ",
-        riscv_supervisor_doc_url!("#12-1-1-9-supervisor-trap-value-stval-register"),
-    )]
-    pub enum Exception(usize, stval: usize) {
-        0 => InstructionAddressMisaligned(Va = Va::new(stval)),
-        1 => InstructionAccessFault(Va = Va::new(stval)),
-        2 => IllegalInstruction(usize = stval),
-        3 => Breakpoint(Va = Va::new(stval)),
-        4 => LoadAddressMisaligned(Va = Va::new(stval)),
-        5 => LoadAccessFault(Va = Va::new(stval)),
-        6 => StoreAddressMisaligned(Va = Va::new(stval)),
-        7 => StoreAccessFault(Va = Va::new(stval)),
-        8 => EnvironmentCallFromUMode,
-        9 => EnvironmentCallFromSMode,
-        PageFault(PageFaultReason) {
-            12 => PageFaultReason::Instruction(Va::new(stval)),
-            13 => PageFaultReason::LoadPage(Va::new(stval)),
-            15 => PageFaultReason::StorePage(Va::new(stval)),
-        },
-    }
-}
-
-args_enum! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    #[doc = concat!(
-        "Standard supervisor-level interrupt codes reported in `scause`.\n\n",
-        "The numeric codes come from RISC-V Privileged ISA ",
-        riscv_privileged_isa_version!(),
-        "'s [`scause` register] definition. Interrupts are asynchronous ",
-        "events, so this enum does not decode `stval`; timer, software, and ",
-        "external interrupt handlers should inspect the relevant ",
-        "interrupt-pending state or interrupt controller instead.\n\n",
-        "[`scause` register]: ",
-        riscv_supervisor_doc_url!("#scause"),
-    )]
-    pub enum Interrupt(usize) {
-        1 => SupervisorSoftware,
-        5 => SupervisorTimer,
-        9 => SupervisorExternal,
     }
 }

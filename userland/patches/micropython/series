@@ -2,3 +2,5 @@
 0002-feat-port-for-os.patch
 0003-feat-add-file-descriptor-syscalls.patch
 0004-refactor-adapt-user-syscall-result-ABI.patch
+0005-feat-enable-core-and-read-only-library-imports.patch
+0006-feat-enable-double-precision-math-module.patch

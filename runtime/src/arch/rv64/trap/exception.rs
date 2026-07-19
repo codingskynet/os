@@ -1,8 +1,8 @@
-use crate::arch::trap::{Exception, TrapFrame};
+use crate::arch::trap::TrapFrame;
+use crate::arch::{Exception, PageFaultReason};
 use crate::debug;
 use crate::kernel::syscall::Syscall;
 use crate::kernel::thread::Thread;
-use crate::mm::addr::Va;
 
 pub fn handle_exception(frame: &mut TrapFrame, exception: Exception) {
     match exception {
@@ -12,23 +12,6 @@ pub fn handle_exception(frame: &mut TrapFrame, exception: Exception) {
             "unhandled exception: {:?}, sepc={}, stval={:#x}",
             exception, frame.sepc, frame.stval
         ),
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PageFaultReason {
-    Instruction(Va),
-    LoadPage(Va),
-    StorePage(Va),
-}
-
-impl PageFaultReason {
-    fn addr(&self) -> Va {
-        match self {
-            PageFaultReason::Instruction(addr) => *addr,
-            PageFaultReason::LoadPage(addr) => *addr,
-            PageFaultReason::StorePage(addr) => *addr,
-        }
     }
 }
 

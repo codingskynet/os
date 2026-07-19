@@ -23,6 +23,8 @@ pub fn smoke() {
     smoke::page_fault::smoke();
     #[cfg(feature = "smoke-kernel-thread")]
     smoke::kernel_thread::smoke();
+    #[cfg(feature = "smoke-floating-point")]
+    smoke::floating_point::smoke();
     #[cfg(feature = "smoke-userland")]
     smoke::userland::smoke();
 

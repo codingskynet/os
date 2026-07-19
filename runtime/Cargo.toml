@@ -10,11 +10,12 @@ test = false
 workspace = true
 
 [features]
-smoke = ["smoke-allocator", "smoke-initarfs", "smoke-page-fault", "smoke-kernel-thread", "smoke-userland"]
+smoke = ["smoke-allocator", "smoke-initarfs", "smoke-page-fault", "smoke-kernel-thread", "smoke-floating-point", "smoke-userland"]
 smoke-allocator = []
 smoke-initarfs = []
 smoke-page-fault = []
 smoke-kernel-thread = []
+smoke-floating-point = []
 smoke-userland = []
 
 [dependencies]

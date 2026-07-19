@@ -3,12 +3,35 @@
 //! These functions keep inline assembly localized so higher-level runtime code
 //! can express intent through named operations.
 
+use super::Sstatus;
 use crate::asm;
+
+pub mod floating_point {
+    use super::*;
+
+    pub fn enable() {
+        unsafe {
+            asm!(
+                "csrs sstatus, {fs_dirty}",
+                fs_dirty = in(reg) Sstatus::FS_DIRTY.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+
+    pub fn disable() {
+        unsafe {
+            asm!(
+                "csrc sstatus, {fs}",
+                fs = in(reg) Sstatus::FS.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+}
 
 pub mod interrupt {
     use super::*;
-
-    pub const SSTATUS_SIE: usize = 1 << 1;
 
     pub fn is_enabled() -> bool {
         let sstatus: usize;
@@ -19,14 +42,14 @@ pub mod interrupt {
                 options(nomem, nostack, preserves_flags),
             );
         }
-        sstatus & SSTATUS_SIE != 0
+        sstatus & Sstatus::SIE.bits() != 0
     }
 
     pub fn enable() {
         unsafe {
             asm!(
                 "csrs sstatus, {sie}",
-                sie = in(reg) SSTATUS_SIE,
+                sie = in(reg) Sstatus::SIE.bits(),
                 options(nomem, nostack, preserves_flags),
             );
         }
@@ -36,7 +59,7 @@ pub mod interrupt {
         unsafe {
             asm!(
                 "csrc sstatus, {sie}",
-                sie = in(reg) SSTATUS_SIE,
+                sie = in(reg) Sstatus::SIE.bits(),
                 options(nomem, nostack, preserves_flags),
             );
         }
@@ -57,8 +80,6 @@ pub mod interrupt {
 pub mod memory {
     use super::*;
 
-    const SSTATUS_SUM: usize = 1 << 18;
-
     /// Enables supervisor access to user pages and returns whether it was
     /// already enabled.
     pub fn enable_userspace_access() -> bool {
@@ -67,18 +88,18 @@ pub mod memory {
             asm!(
                 "csrrs {previous}, sstatus, {sum}",
                 previous = out(reg) previous,
-                sum = in(reg) SSTATUS_SUM,
+                sum = in(reg) Sstatus::SUM.bits(),
                 options(nomem, nostack, preserves_flags),
             );
         }
-        previous & SSTATUS_SUM != 0
+        previous & Sstatus::SUM.bits() != 0
     }
 
     pub fn disable_userspace_access() {
         unsafe {
             asm!(
                 "csrc sstatus, {sum}",
-                sum = in(reg) SSTATUS_SUM,
+                sum = in(reg) Sstatus::SUM.bits(),
                 options(nomem, nostack, preserves_flags),
             );
         }
