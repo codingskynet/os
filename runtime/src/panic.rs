@@ -5,6 +5,7 @@ use core::ptr;
 
 use crate::arch::consts::PAGE_SIZE;
 use crate::arch::trap::TrapFrame;
+use crate::kernel::per_core::PerCore;
 use crate::mm::addr::Va;
 use crate::println;
 
@@ -27,15 +28,6 @@ impl PanicStack {
     }
 }
 
-// SAFETY: normal Rust code never accesses the storage. The only shared static
-// instance is selected before a hart has installed `tp`, when the boot protocol
-// permits only the boot hart to execute through the supervisor trap vector.
-unsafe impl Sync for PanicStack {}
-
-/// Emergency fallback used before the boot hart installs its PerCore pointer.
-/// Runtime traps use the private PanicStack embedded in the current PerCore.
-pub static EARLY_PANIC_STACK: PanicStack = PanicStack(UnsafeCell::new([0; PAGE_SIZE.get()]));
-
 pub extern "C" fn kernel_stack_overflow(frame: &TrapFrame) -> ! {
     panic!(
         "kernel stack overflow: cause={:?}, sepc={}, sp={}, stval={}",
@@ -48,7 +40,7 @@ pub extern "C" fn kernel_stack_overflow(frame: &TrapFrame) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    println!("kernel panic");
+    println!("kernel panic from core={}", PerCore::core_id());
 
     if let Some(location) = info.location() {
         println!(

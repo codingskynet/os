@@ -70,7 +70,7 @@ fn start_secondary_harts() {
 /// reaches it only after all secondary bring-up waits have completed, so it is
 /// deliberately excluded from the acknowledgement count.
 pub fn idle_online() {
-    if PerCore::with_mut(|per_core| per_core.is_boot_core()) {
+    if PerCore::is_boot_core() {
         // All secondaries are already on runtime-owned idle stacks, and this
         // primary has now abandoned boot_stack as well. The complete .init
         // range, including both temporary stacks, can be reclaimed safely.

@@ -98,8 +98,12 @@ impl PerCore {
         f(per_core)
     }
 
-    pub fn is_boot_core(&mut self) -> bool {
-        self.index == 0
+    pub fn is_boot_core() -> bool {
+        PerCore::with_mut(|c| c.index == 0)
+    }
+
+    pub fn core_id() -> usize {
+        PerCore::with_mut(|c| c.hart_id)
     }
 }
 

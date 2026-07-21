@@ -25,7 +25,10 @@ pub fn spawn(entry: impl FnOnce() + Send + 'static) -> Arc<AtomicIsize> {
 }
 
 pub fn yield_now() {
-    SCHEDULER.run_next();
+    // On SMP, another hart may consume the final ready thread between yields.
+    // An empty global run queue therefore means there is nothing to yield to;
+    // keep executing the current thread instead of treating it as an error.
+    SCHEDULER.try_run_next();
 }
 
 /// Scheduler-visible lifecycle state for a kernel thread.

@@ -126,9 +126,10 @@ pub unsafe extern "C" fn enter_user(_entry: Va, _user_sp: Va, _kernel_sp: Va) ->
 /// # Safety
 ///
 /// Hardware must enter this function through `stvec`. For S-mode traps `sp`
-/// must identify the current thread's guarded kernel-stack slot and `sscratch`
-/// must be 0. For U-mode traps `sscratch` holds the mapped trap-entry scratch
-/// anchor installed by `enter_user`.
+/// must identify the current thread's guarded kernel-stack slot, `sscratch`
+/// must be 0, and `tp` must point to the current hart's [`PerCore`]. For U-mode
+/// traps `sscratch` holds the mapped trap-entry scratch anchor installed by
+/// `enter_user`.
 /// It is naked because it saves the interrupted register state itself before
 /// calling Rust code.
 ///
@@ -278,15 +279,10 @@ pub unsafe extern "C" fn _trap_entry() -> ! {
                     "sret",
 
                     // A normal frame would land in a guard/hole. Switch to this
-                    // hart's private panic stack before touching memory. A zero
-                    // tp denotes the boot-only phase before PerCore is installed.
+                    // hart's private panic stack before touching memory. stvec
+                    // is installed only after tp points to an initialized PerCore.
                     "8:",
-                    "beqz tp, 7f",
                     "ld sp, {per_core_panic_stack}(tp)",
-                    "j 6f",
-                    "7:",
-                    "la sp, {early_panic_stack}",
-                    "6:",
                     "addi sp, sp, 2047",
                     "addi sp, sp, 2047",
                     "addi sp, sp, 2",
@@ -338,7 +334,6 @@ pub unsafe extern "C" fn _trap_entry() -> ! {
                 stval = const offset_of!(TrapFrame, stval),
                 handler = sym _trap_handler,
                 per_core_panic_stack = const PerCore::PANIC_STACK_OFFSET,
-                early_panic_stack = sym crate::panic::EARLY_PANIC_STACK,
                 overflow_handler = sym crate::panic::kernel_stack_overflow,
             )
         };

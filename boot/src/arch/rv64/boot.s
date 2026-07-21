@@ -141,7 +141,6 @@ _start:
     # Re-read a0 from the CSR (idempotent), leave a1 untouched so the
     # device-tree pointer survives until _start_rust.
     csrr a0, mhartid                # a0 = hart id (from CSR, same as what QEMU set)
-    mv   tp, zero                   # no PerCore pointer is installed yet
 
     # Only hart 0 performs global initialization. Other harts poll the release
     # flag published after the shared kernel state is ready.
