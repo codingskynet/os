@@ -159,6 +159,8 @@ name = "runtime-test"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "extend",
+ "thiserror",
  "winnow",
 ]
 

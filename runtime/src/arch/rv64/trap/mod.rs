@@ -384,6 +384,7 @@ extern "C" fn _trap_handler(frame: &mut TrapFrame) {
     match frame.cause() {
         TrapCause::Exception(exception) => handle_exception(frame, exception),
         TrapCause::Interrupt(Interrupt::SupervisorTimer) => handle_timer(),
+        TrapCause::Interrupt(Interrupt::SupervisorExternal) => super::external::handle(),
         TrapCause::Interrupt(interrupt) => panic!(
             "unhandled interrupt: {:?}, sepc={}, stval={:#x}",
             interrupt, frame.sepc, frame.stval

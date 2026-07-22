@@ -3,7 +3,7 @@
 //! These functions keep inline assembly localized so higher-level runtime code
 //! can express intent through named operations.
 
-use super::Sstatus;
+use super::{Sie, Sstatus};
 use crate::asm;
 
 pub mod floating_point {
@@ -69,12 +69,21 @@ pub mod interrupt {
         unsafe { asm!("wfi", options(nostack, preserves_flags)) }
     }
 
-    const SIE_STIE: usize = 1 << 5;
     pub fn allow_timer() {
         unsafe {
             asm!(
                 "csrs sie, {stie}",
-                stie = in(reg) SIE_STIE,
+                stie = in(reg) Sie::STIE.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+
+    pub fn allow_external() {
+        unsafe {
+            asm!(
+                "csrs sie, {seie}",
+                seie = in(reg) Sie::SEIE.bits(),
                 options(nomem, nostack, preserves_flags),
             );
         }

@@ -67,6 +67,14 @@ impl PartialOrd<Pa> for usize {
     }
 }
 
+impl TryFrom<u64> for Pa {
+    type Error = core::num::TryFromIntError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Ok(Self(usize::try_from(value)?))
+    }
+}
+
 impl Pa {
     pub const fn new(addr: usize) -> Self {
         Self(addr)

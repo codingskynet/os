@@ -1,5 +1,5 @@
 use crate::kernel::file::FileDescriptor;
-use crate::kernel::thread::Thread;
+use crate::kernel::thread::{CurrentThread, Thread};
 use crate::nonzero_enum;
 
 nonzero_enum! {
@@ -16,4 +16,8 @@ impl Thread {
             None => Err(Error::BadFileDescriptor),
         }
     }
+}
+
+pub fn close(fd: FileDescriptor) -> Result<usize, Error> {
+    CurrentThread::with_mut(|thread| thread.close(fd))
 }

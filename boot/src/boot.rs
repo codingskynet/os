@@ -5,13 +5,14 @@
 //! global state.
 
 use runtime::arch::consts::PAGE_SIZE;
+use runtime::arch::external::ExternalMeta;
+use runtime::dev::console::ConsoleConfig;
 use runtime::dev::dt::{Fdt, prop};
 use runtime::kernel::clock::ClockMeta;
-use runtime::kernel::console;
+use runtime::kernel::console::Console;
 use runtime::kernel::per_core::PerCore;
-use runtime::kernel::sync::freezable::FreezableToken;
 use runtime::mm::addr::Pa;
-use runtime::mm::page_meta::{PageMeta, PageMetaSection};
+use runtime::mm::page_meta::{PageMeta, PageMetaMap, PageMetaSection};
 use runtime::mm::{BUDDY, PAGE_META_MAP};
 use runtime::printlnk;
 
@@ -42,11 +43,9 @@ pub enum BootData {
 /// It must be called with a valid stack pointer and BSS already zeroed.
 #[unsafe(link_section = ".init.text")]
 pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
-    let mut token = FreezableToken::take().expect("failed to take FreezableToken");
     match &boot_info.boot_data {
         BootData::DeviceTree(fdt) => {
-            ClockMeta::init(&mut token, fdt).expect("failed to initialize clock");
-
+            ClockMeta::init(fdt).expect("failed to initialize clock");
             let model = fdt
                 .query()
                 .prop("model")
@@ -54,27 +53,29 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
                 .unwrap_or("(unknown)");
             printlnk!("dtb: FDT detected, model = \"{model}\"");
 
-            console::install_from_fdt(fdt).expect("failed to install console");
-
             {
                 let mut alloc = BUMP_ALLOCATOR.lock();
                 alloc.init(fdt);
-                init_page_metadata(&mut token, &mut alloc);
+                init_page_metadata(&mut alloc);
             }
-            unsafe { arch::paging::init_page_table(fdt) };
+
+            let console = ConsoleConfig::from_fdt(fdt).expect("failed to locate console config");
+            Console::install(&console).expect("failed to install console");
+            unsafe { arch::paging::init_page_table(fdt, &console) };
             PerCore::init(fdt, boot_info.boot_cpu_id);
+            ExternalMeta::init(fdt, &console).expect("failed to initialize external interrupts");
         }
     }
 
-    token.forget();
     runtime::kernel::init::kernel_init();
 }
 
 #[unsafe(link_section = ".init.text")]
-fn init_page_metadata(token: &mut FreezableToken, allocator: &mut BumpAllocator) {
+fn init_page_metadata(allocator: &mut BumpAllocator) {
     extern crate alloc;
     use alloc::boxed::Box;
 
+    let mut page_meta_map = PageMetaMap::empty();
     for memory in allocator.memories_mut() {
         let memory_region = memory.region();
         let offset = memory_region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
@@ -113,12 +114,10 @@ fn init_page_metadata(token: &mut FreezableToken, allocator: &mut BumpAllocator)
 
         BUDDY.lock().initialize_section(&mut *page_meta_items);
 
-        token.write(&PAGE_META_MAP, |map| {
-            map.add(PageMetaSection::new(page_meta_items, offset, memory_region))
-        });
+        page_meta_map.add(PageMetaSection::new(page_meta_items, offset, memory_region));
     }
 
     // Page-table allocation and destruction may now resolve raw physical
-    // addresses back to their metadata while other boot globals remain mutable.
-    token.mark_shared(&PAGE_META_MAP);
+    // addresses back to their metadata.
+    PAGE_META_MAP.get_or_init(|| page_meta_map);
 }

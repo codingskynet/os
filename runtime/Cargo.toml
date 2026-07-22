@@ -16,6 +16,7 @@ smoke = [
     "smoke-page-fault",
     "smoke-kernel-thread",
     "smoke-floating-point",
+    "smoke-rust-std",
     "smoke-userland"
 ]
 
@@ -24,6 +25,7 @@ smoke-floating-point = []
 smoke-initarfs = []
 smoke-kernel-thread = []
 smoke-page-fault = []
+smoke-rust-std = []
 smoke-userland = []
 
 # Destructive tests, each run in its own QEMU instance.

@@ -4,7 +4,7 @@ INITARFS := ../artifacts/initarfs
 ROOTFS_BIN := $(STAGING)/bin
 
 # Built packages that install into $(ROOTFS_BIN).
-SUBDIRS := simple ports/micropython/ports/os
+SUBDIRS := simple rust-std ports/micropython/ports/os
 # Host-side tools built by packages but not installed into the rootfs.
 CLEAN_SUBDIRS := $(SUBDIRS) ports/micropython/mpy-cross
 

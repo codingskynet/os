@@ -43,6 +43,17 @@ jobs:
       - name: Prepare MicroPython port
         run: make ports-prepare PORTS=micropython
 
+      - name: Cache Rust checkout and std build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            userland/ports/rust
+            artifacts/userland/rust-std-target
+          key: rust-std-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'userland/Makefile', 'userland/ports.toml', 'userland/patches/rust/**', 'userland/rust-std/**') }}
+
+      - name: Prepare Rust port
+        run: make ports-prepare PORTS=rust
+
       - name: Spell check (typos)
         uses: crate-ci/typos@v1.48.0
 

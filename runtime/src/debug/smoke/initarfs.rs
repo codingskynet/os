@@ -1,3 +1,4 @@
+use crate::fs::ReadResult;
 use crate::{fs, printlnk};
 
 const EXPECTED: &[u8] = include_bytes!("../../../../userland/rootfs/hello.txt");
@@ -9,7 +10,9 @@ pub fn smoke() {
         .open("/hello.txt")
         .expect("smoke-initarfs: failed to open /hello.txt");
     let mut buffer = [0; 64];
-    let len = file.read(0, &mut buffer);
+    let ReadResult::Complete(len) = file.read(0, &mut buffer) else {
+        panic!("smoke-initarfs: regular file read blocked")
+    };
 
     assert_eq!(
         &buffer[..len],
@@ -18,7 +21,7 @@ pub fn smoke() {
     );
     assert_eq!(
         file.read(len, &mut buffer),
-        0,
+        ReadResult::Complete(0),
         "smoke-initarfs: read at EOF returned data"
     );
 

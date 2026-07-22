@@ -39,7 +39,14 @@ impl<'a> Value<'a> {
         RegIter::new(self.0, address_cells, size_cells)
     }
 
-    pub fn into_scalar(self) -> Option<u64> {
+    pub fn into_scalar_u32(self) -> Option<u32> {
+        match self.0.len() {
+            4 => self.0.try_into().map(u32::from_be_bytes).ok(),
+            _ => None,
+        }
+    }
+
+    pub fn into_scalar_u64(self) -> Option<u64> {
         match self.0.len() {
             4 => self
                 .0

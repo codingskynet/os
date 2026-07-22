@@ -47,7 +47,7 @@ impl PerCore {
     }
 
     pub fn init(fdt: &Fdt, boot_hart_id: usize) {
-        let cpu_count = fdt.cpu_count();
+        let cpu_count = fdt.cpus().count();
         assert!(cpu_count > 0, "DT does not contain an enabled CPU");
         assert!(
             PER_CORE.load(Ordering::Relaxed).is_null(),

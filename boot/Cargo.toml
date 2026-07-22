@@ -11,6 +11,7 @@ smoke-floating-point = ["runtime/smoke-floating-point"]
 smoke-initarfs = ["runtime/smoke-initarfs"]
 smoke-kernel-thread = ["runtime/smoke-kernel-thread"]
 smoke-page-fault = ["runtime/smoke-page-fault"]
+smoke-rust-std = ["runtime/smoke-rust-std"]
 smoke-userland = ["runtime/smoke-userland"]
 
 smoke-kernel-stack-overflow = ["runtime/smoke-kernel-stack-overflow"]

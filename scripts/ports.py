@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -33,6 +34,7 @@ class Port:
     rev: str
     dest: Path
     patches: Path
+    submodules: tuple[str, ...]
 
 
 def run(args: Sequence[str], cwd: Path | None = None, capture: bool = False) -> str:
@@ -76,7 +78,14 @@ def parse_manifest_subset(text: str) -> dict[str, Any]:
         if not match:
             raise PortsError(f"unsupported TOML syntax at ports.toml:{line_number}")
         key, raw_value = match.groups()
-        if re.fullmatch(r'"(?:[^"\\]|\\.)*"', raw_value):
+        if raw_value.startswith("["):
+            try:
+                value = json.loads(raw_value)
+            except json.JSONDecodeError as error:
+                raise PortsError(f"unsupported value at ports.toml:{line_number}") from error
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise PortsError(f"unsupported value at ports.toml:{line_number}")
+        elif re.fullmatch(r'"(?:[^"\\]|\\.)*"', raw_value):
             value: Any = bytes(raw_value[1:-1], "utf-8").decode("unicode_escape")
         elif raw_value in ("true", "false"):
             value = raw_value == "true"
@@ -122,9 +131,23 @@ def load_ports(selected: Sequence[str]) -> list[Port]:
             raise PortsError(f"port {name!r}: url must be a non-empty string")
         if not isinstance(rev, str) or not SHA1_RE.fullmatch(rev):
             raise PortsError(f"port {name!r}: rev must be a lowercase 40-character commit SHA")
+        submodules = entry.get("submodules", [])
+        if not isinstance(submodules, list) or not all(
+            isinstance(path, str)
+            and path
+            and not Path(path).is_absolute()
+            and ".." not in Path(path).parts
+            for path in submodules
+        ):
+            raise PortsError(
+                f"port {name!r}: submodules must be relative paths that stay inside the checkout"
+            )
+        if len(submodules) != len(set(submodules)):
+            raise PortsError(f"port {name!r}: duplicate submodule path")
         ports.append(Port(name, url, rev,
                           resolve_inside_userland(entry.get("dest"), "dest", name),
-                          resolve_inside_userland(entry.get("patches"), "patches", name)))
+                          resolve_inside_userland(entry.get("patches"), "patches", name),
+                          tuple(submodules)))
     if not selected:
         return ports
     unknown = sorted(set(selected) - seen)
@@ -185,10 +208,17 @@ def apply_patches(port: Port, checkout: Path) -> None:
         ), cwd=checkout)
 
 
+def prepare_submodules(port: Port) -> None:
+    if port.submodules:
+        run(("git", "submodule", "update", "--init", "--depth=1", "--", *port.submodules),
+            cwd=port.dest)
+
+
 # Shallow-fetch the pinned revision and apply its stored patch series.
 def prepare(port: Port) -> None:
     if port.dest.exists():
         verify(port)
+        prepare_submodules(port)
         print(
             f"{port.name}: checkout already exists and is synchronized at "
             f"{port.dest.relative_to(PROJECT_ROOT)}"
@@ -206,6 +236,7 @@ def prepare(port: Port) -> None:
                 "check that the commit exists and the Git server permits fetching it by SHA"
             ) from error
         run(("git", "checkout", "--quiet", "--detach", "FETCH_HEAD"), cwd=port.dest)
+        prepare_submodules(port)
         apply_patches(port, port.dest)
     except Exception:
         if port.dest.exists():

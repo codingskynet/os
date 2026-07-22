@@ -43,14 +43,14 @@ impl<'a> TarfsFnode<'a> {
 }
 
 impl<'a> Fnode for TarfsFnode<'a> {
-    fn read(&self, offset: usize, buffer: &mut [u8]) -> usize {
+    fn poll_read(&self, offset: usize, buffer: &mut [u8], _cx: &mut Context<'_>) -> Poll<usize> {
         let Some(data) = self.data.get(offset..) else {
-            return 0;
+            return Poll::Ready(0);
         };
 
         let len = data.len().min(buffer.len());
         buffer[..len].copy_from_slice(&data[..len]);
-        len
+        Poll::Ready(len)
     }
 
     fn write(&self, _offset: usize, _buffer: &[u8]) -> usize {

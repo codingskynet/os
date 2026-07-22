@@ -8,6 +8,7 @@ mod path;
 mod tarfs;
 
 use alloc::boxed::Box;
+use core::task::{Context, Poll, Waker};
 
 use hashbrown::HashMap;
 use tarfs::Tarfs;
@@ -49,6 +50,22 @@ trait Fs: Send {
 }
 
 pub trait Fnode: Send + Sync {
-    fn read(&self, offset: usize, buffer: &mut [u8]) -> usize;
+    fn poll_read(&self, offset: usize, buffer: &mut [u8], cx: &mut Context<'_>) -> Poll<usize>;
+
+    fn read(&self, offset: usize, buffer: &mut [u8]) -> ReadResult {
+        let mut cx = Context::from_waker(Waker::noop());
+        match self.poll_read(offset, buffer, &mut cx) {
+            Poll::Ready(read) => ReadResult::Complete(read),
+            Poll::Pending => ReadResult::Blocked,
+        }
+    }
+
     fn write(&self, offset: usize, buffer: &[u8]) -> usize;
+}
+
+/// Result of attempting a file read without parking the calling thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadResult {
+    Complete(usize),
+    Blocked,
 }

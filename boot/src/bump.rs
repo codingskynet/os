@@ -58,8 +58,9 @@ impl BumpAllocator {
     pub fn init(&mut self, fdt: &Fdt) {
         let memories = self.memories.get_mut();
         memories.clear();
-        for (addr, size) in MemoryIter::new(fdt) {
-            let region = Region::from_size(Pa::new(addr as usize), size);
+        for reg in MemoryIter::new(fdt) {
+            let (addr, size) = reg.expect("memory reg is incompatible with this target");
+            let region = Region::from_size(Pa::new(addr), size);
             debug!("bump: register memory {region:?}");
             memories.push(Memory::new(region));
         }

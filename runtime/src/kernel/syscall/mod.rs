@@ -1,6 +1,7 @@
 mod close;
 mod open;
 mod read;
+mod sleep;
 mod write;
 
 use core::num::NonZeroUsize;
@@ -9,7 +10,7 @@ use crate::arch::regs::GeneralRegs;
 use crate::args_enum;
 use crate::kernel::file::FileDescriptor;
 use crate::kernel::per_core::PerCore;
-use crate::kernel::thread::{self, CurrentThread};
+use crate::kernel::thread;
 
 args_enum! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +21,7 @@ args_enum! {
         3 => Open((usize, usize) = (a1, a2)),
         4 => Close(FileDescriptor = a1.into()),
         5 => HartId,
+        6 => Sleep(usize = a1),
     }
 }
 
@@ -41,6 +43,12 @@ impl<T: Into<usize>, E: Into<NonZeroUsize>> From<core::result::Result<T, E>> for
             Ok(value) => Self::ok(value),
             Err(status) => Self::err(status),
         }
+    }
+}
+
+impl From<usize> for SyscallResult {
+    fn from(value: usize) -> Self {
+        Self::ok(value)
     }
 }
 
@@ -70,17 +78,12 @@ impl SyscallResult {
 pub fn handle(syscall: Syscall) -> (usize, usize) {
     let result: SyscallResult = match syscall {
         Syscall::Exit(code) => thread::exit(code),
-        Syscall::Write((fd, addr, len)) => {
-            CurrentThread::with_mut(|thread| thread.write(fd, addr, len)).into()
-        }
-        Syscall::Read((fd, addr, len)) => {
-            CurrentThread::with_mut(|thread| thread.read(fd, addr, len)).into()
-        }
-        Syscall::Open((addr, len)) => {
-            CurrentThread::with_mut(|thread| thread.open(addr, len)).into()
-        }
-        Syscall::Close(fd) => CurrentThread::with_mut(|thread| thread.close(fd)).into(),
+        Syscall::Write((fd, addr, len)) => write::write(fd, addr, len).into(),
+        Syscall::Read((fd, addr, len)) => read::read(fd, addr, len).into(),
+        Syscall::Open((addr, len)) => open::open(addr, len).into(),
+        Syscall::Close(fd) => close::close(fd).into(),
         Syscall::HartId => SyscallResult::ok(PerCore::with_mut(|per_core| per_core.hart_id)),
+        Syscall::Sleep(milliseconds) => sleep::sleep(milliseconds).into(),
         Syscall::Unknown(number) => panic!("unhandled ecall from U-mode: number={number}"),
     };
     result.into()

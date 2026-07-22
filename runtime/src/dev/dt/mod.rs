@@ -12,7 +12,10 @@
 
 pub mod cpu;
 pub mod memory;
+pub mod mmio;
 pub mod prop;
+pub mod reg;
+pub mod util;
 
 use core::ffi::CStr;
 use core::{slice, str};
@@ -141,6 +144,38 @@ impl Fdt {
         walker
     }
 
+    /// Find the first node whose `compatible` string-list contains `compatible`.
+    ///
+    /// Unlike a path lookup, this follows the device binding and therefore
+    /// works when firmware places or names a device differently.
+    pub fn find_compatible(&self, compatible: &str) -> Option<FdtWalker<'_>> {
+        fn matches(node: FdtWalker<'_>, compatible: &str) -> bool {
+            node.props().any(|(name, value)| {
+                if name == "compatible" {
+                    let value = value.into_slice();
+                    value.last() == Some(&0)
+                        && value
+                            .split(|byte| *byte == 0)
+                            .any(|entry| entry == compatible.as_bytes())
+                } else {
+                    false
+                }
+            })
+        }
+
+        let mut walker = self.query();
+        if matches(walker.clone(), compatible) {
+            return Some(walker);
+        }
+
+        while let Some(token) = walker.next() {
+            if matches!(token, FdtToken::Node(_)) && matches(walker.clone(), compatible) {
+                return Some(walker);
+            }
+        }
+        None
+    }
+
     /// Start walking the FDT structure block from the root node.
     ///
     /// This method relies on the safety contract of [`Fdt::new`]: the backing
@@ -244,7 +279,9 @@ impl<'a> FdtWalker<'a> {
                         depth -= 1;
                     }
                 }
-                FdtToken::Prop { name: n, value } if n == name => return Some(value),
+                FdtToken::Prop { name: n, value } if depth == 0 && n == name => {
+                    return Some(value);
+                }
                 _ => continue,
             }
         }
@@ -421,7 +458,8 @@ impl<'a> Iterator for FdtPropWalker<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
+    use core::num::NonZeroU64;
     use std::vec::Vec;
 
     use super::*;
@@ -434,7 +472,7 @@ mod tests {
         value: &'a [u8],
     }
 
-    fn qemu_fdt() -> Fdt {
+    pub fn qemu_fdt() -> Fdt {
         unsafe { Fdt::new(QEMU_VIRT_DTB.as_ptr()).unwrap() }
     }
 
@@ -517,6 +555,32 @@ mod tests {
     }
 
     #[test]
+    fn find_compatible_matches_any_string_in_the_list() {
+        let fdt = qemu_fdt();
+
+        let plic = fdt
+            .find_compatible("riscv,plic0")
+            .expect("QEMU virt should contain a compatible PLIC");
+
+        // `phandle` precedes `compatible` in this node. Finding the compatible
+        // string must not consume the walker returned to the caller.
+        assert_eq!(
+            plic.clone().prop("phandle").unwrap().into_scalar_u64(),
+            Some(3)
+        );
+        assert!(fdt.find_compatible("sifive,plic-1.0.0").is_some());
+        assert!(fdt.find_compatible("missing,device").is_none());
+    }
+
+    #[test]
+    fn prop_does_not_search_child_nodes() {
+        let fdt = qemu_fdt();
+
+        // `/cpus` has no `reg`, while its `cpu@0` child does.
+        assert!(fdt.lookup("/cpus").prop("reg").is_none());
+    }
+
+    #[test]
     fn prop_walker_stops_at_current_node_end() {
         let fdt = qemu_fdt();
 
@@ -553,7 +617,7 @@ mod tests {
         let mut it = reg.into_reg(address_cells, size_cells);
         let (addr, size) = it.next().expect("should yield one reg tuple");
         assert_eq!(addr, 0x10000000);
-        assert_eq!(size, Some(0x100));
+        assert_eq!(size, Some(NonZeroU64::new(0x100).unwrap()));
         assert!(it.next().is_none(), "only one reg tuple expected");
     }
 
@@ -570,8 +634,14 @@ mod tests {
 
         let tuples: Vec<_> = reg.into_reg(address_cells, size_cells).collect();
         assert_eq!(tuples.len(), 2);
-        assert_eq!(tuples[0], (0x20000000, Some(0x02000000)));
-        assert_eq!(tuples[1], (0x22000000, Some(0x02000000)));
+        assert_eq!(
+            tuples[0],
+            (0x20000000, Some(NonZeroU64::new(0x02000000).unwrap()))
+        );
+        assert_eq!(
+            tuples[1],
+            (0x22000000, Some(NonZeroU64::new(0x02000000).unwrap()))
+        );
     }
 
     #[test]
@@ -580,7 +650,10 @@ mod tests {
         let reg = b"\x80\x00\x00\x00\x00\x10\x00\x00";
         let tuples: Vec<_> = RegIter::new(reg, 1, 1).collect();
         assert_eq!(tuples.len(), 1);
-        assert_eq!(tuples[0], (0x80000000, Some(0x100000)));
+        assert_eq!(
+            tuples[0],
+            (0x80000000, Some(NonZeroU64::new(0x100000).unwrap()))
+        );
     }
 
     #[test]

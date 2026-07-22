@@ -1,0 +1,843 @@
+From 53b4426f47720eedb62d2728221bdb5697e1d640 Mon Sep 17 00:00:00 2001
+From: OS port importer <ports@localhost>
+Date: Tue, 21 Jul 2026 17:35:20 +0900
+Subject: feat: port Rust std to OS userland
+
+---
+ library/std/Cargo.toml                  |   2 +-
+ library/std/build.rs                    |   1 +
+ library/std/src/sys/alloc/mod.rs        |   4 +
+ library/std/src/sys/alloc/os.rs         |  71 +++++++++
+ library/std/src/sys/exit.rs             |   3 +
+ library/std/src/sys/fs/mod.rs           |   6 +
+ library/std/src/sys/fs/os.rs            | 188 ++++++++++++++++++++++++
+ library/std/src/sys/io/error/mod.rs     |   1 +
+ library/std/src/sys/pal/mod.rs          |   4 +
+ library/std/src/sys/pal/os/mod.rs       |  93 ++++++++++++
+ library/std/src/sys/random/mod.rs       |   2 +
+ library/std/src/sys/stdio/mod.rs        |   4 +
+ library/std/src/sys/stdio/os.rs         |  60 ++++++++
+ library/std/src/sys/thread/mod.rs       |   7 +
+ library/std/src/sys/thread/os.rs        |  18 +++
+ library/std/src/sys/thread_local/mod.rs |   2 +
+ os/README.md                            |  50 +++++++
+ os/os.ld                                |  57 +++++++
+ os/riscv64gc-unknown-os.json            |  24 +++
+ os/startup.S                            |  20 +++
+ 20 files changed, 616 insertions(+), 1 deletion(-)
+ create mode 100644 library/std/src/sys/alloc/os.rs
+ create mode 100644 library/std/src/sys/fs/os.rs
+ create mode 100644 library/std/src/sys/pal/os/mod.rs
+ create mode 100644 library/std/src/sys/stdio/os.rs
+ create mode 100644 library/std/src/sys/thread/os.rs
+ create mode 100644 os/README.md
+ create mode 100644 os/os.ld
+ create mode 100644 os/riscv64gc-unknown-os.json
+ create mode 100644 os/startup.S
+
+diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
+index 701e899a..b7aa0b55 100644
+--- a/library/std/Cargo.toml
++++ b/library/std/Cargo.toml
+@@ -62,7 +62,7 @@ path = "../windows_link"
+ rand = { version = "0.9.0", default-features = false, features = ["alloc"] }
+ rand_xorshift = "0.4.0"
+ 
+-[target.'cfg(any(all(target_family = "wasm", not(any(unix, target_os = "wasi"))), target_os = "xous", target_os = "vexos", all(target_vendor = "fortanix", target_env = "sgx")))'.dependencies]
++[target.'cfg(any(all(target_family = "wasm", not(any(unix, target_os = "wasi"))), target_os = "os", target_os = "xous", target_os = "vexos", all(target_vendor = "fortanix", target_env = "sgx")))'.dependencies]
+ dlmalloc = { version = "0.2.10", features = ['rustc-dep-of-std'] }
+ 
+ [target.x86_64-fortanix-unknown-sgx.dependencies]
+diff --git a/library/std/build.rs b/library/std/build.rs
+index 98856b58..50a9c10b 100644
+--- a/library/std/build.rs
++++ b/library/std/build.rs
+@@ -58,6 +58,7 @@ fn main() {
+         || target_os == "nuttx"
+         || target_os == "cygwin"
+         || target_os == "vexos"
++        || target_os == "os"
+ 
+         // See src/bootstrap/src/core/build_steps/synthetic_targets.rs
+         || env::var("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET").is_ok()
+diff --git a/library/std/src/sys/alloc/mod.rs b/library/std/src/sys/alloc/mod.rs
+index 73d35781..8351ba6a 100644
+--- a/library/std/src/sys/alloc/mod.rs
++++ b/library/std/src/sys/alloc/mod.rs
+@@ -101,6 +101,10 @@ unsafe fn realloc_fallback(ptr: *mut u8, old_layout: Layout, new_size: usize) ->
+         mod vexos;
+         use vexos as imp;
+     }
++    target_os = "os" => {
++        mod os;
++        use os as imp;
++    }
+     target_family = "wasm" => {
+         mod wasm;
+         use wasm as imp;
+diff --git a/library/std/src/sys/alloc/os.rs b/library/std/src/sys/alloc/os.rs
+new file mode 100644
+index 00000000..14667396
+--- /dev/null
++++ b/library/std/src/sys/alloc/os.rs
+@@ -0,0 +1,71 @@
++#![allow(static_mut_refs)]
++
++use crate::alloc::Layout;
++use crate::ptr;
++use crate::sync::atomic::{AtomicBool, Ordering};
++
++unsafe extern "C" {
++    static mut __heap_start: u8;
++    static mut __heap_end: u8;
++}
++
++static mut DLMALLOC: dlmalloc::Dlmalloc<Os> = dlmalloc::Dlmalloc::new_with_allocator(Os);
++
++struct Os;
++
++unsafe impl dlmalloc::Allocator for Os {
++    fn alloc(&self, _size: usize) -> (*mut u8, usize, u32) {
++        static INITIALIZED: AtomicBool = AtomicBool::new(false);
++        if !INITIALIZED.swap(true, Ordering::Relaxed) {
++            unsafe {
++                (
++                    (&raw mut __heap_start).cast(),
++                    (&raw const __heap_end).offset_from_unsigned(&raw const __heap_start),
++                    0,
++                )
++            }
++        } else {
++            (ptr::null_mut(), 0, 0)
++        }
++    }
++
++    fn remap(&self, _ptr: *mut u8, _old: usize, _new: usize, _can_move: bool) -> *mut u8 {
++        ptr::null_mut()
++    }
++
++    fn free_part(&self, _ptr: *mut u8, _old: usize, _new: usize) -> bool {
++        false
++    }
++
++    fn free(&self, _ptr: *mut u8, _size: usize) -> bool {
++        false
++    }
++
++    fn can_release_part(&self, _flags: u32) -> bool {
++        false
++    }
++
++    fn allocates_zeros(&self) -> bool {
++        true
++    }
++
++    fn page_size(&self) -> usize {
++        4096
++    }
++}
++
++pub unsafe fn alloc(layout: Layout) -> *mut u8 {
++    unsafe { DLMALLOC.malloc(layout.size(), layout.align()) }
++}
++
++pub unsafe fn alloc_zeroed(layout: Layout) -> *mut u8 {
++    unsafe { DLMALLOC.calloc(layout.size(), layout.align()) }
++}
++
++pub unsafe fn dealloc(pointer: *mut u8, layout: Layout) {
++    unsafe { DLMALLOC.free(pointer, layout.size(), layout.align()) }
++}
++
++pub unsafe fn realloc(pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
++    unsafe { DLMALLOC.realloc(pointer, layout.size(), layout.align(), new_size) }
++}
+diff --git a/library/std/src/sys/exit.rs b/library/std/src/sys/exit.rs
+index c4fa3af8..5b292e23 100644
+--- a/library/std/src/sys/exit.rs
++++ b/library/std/src/sys/exit.rs
+@@ -101,6 +101,9 @@ pub fn exit(code: i32) -> ! {
+         target_os = "motor" => {
+             moto_rt::process::exit(code)
+         }
++        target_os = "os" => {
++            crate::sys::pal::exit(code)
++        }
+         all(target_vendor = "fortanix", target_env = "sgx") => {
+             crate::sys::pal::abi::exit_with_code(code as _)
+         }
+diff --git a/library/std/src/sys/fs/mod.rs b/library/std/src/sys/fs/mod.rs
+index 0c297c57..a0fac873 100644
+--- a/library/std/src/sys/fs/mod.rs
++++ b/library/std/src/sys/fs/mod.rs
+@@ -45,6 +45,12 @@
+         mod vexos;
+         use vexos as imp;
+     }
++    target_os = "os" => {
++        #[expect(dead_code)]
++        mod unsupported;
++        mod os;
++        use os as imp;
++    }
+     _ => {
+         mod unsupported;
+         use unsupported as imp;
+diff --git a/library/std/src/sys/fs/os.rs b/library/std/src/sys/fs/os.rs
+new file mode 100644
+index 00000000..fa06b911
+--- /dev/null
++++ b/library/std/src/sys/fs/os.rs
+@@ -0,0 +1,188 @@
++pub use super::unsupported::{
++    Dir, DirBuilder, DirEntry, FileAttr, FilePermissions, FileTimes, FileType, ReadDir,
++    canonicalize, copy, exists, link, lstat, readdir, readlink, remove_dir_all, rename, rmdir,
++    set_perm, set_times, set_times_nofollow, stat, symlink, unlink,
++};
++use crate::fmt;
++use crate::fs::TryLockError;
++use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut, SeekFrom};
++use crate::path::Path;
++use crate::sys::{pal, unsupported};
++
++pub struct File {
++    fd: usize,
++}
++
++#[derive(Clone, Debug)]
++pub struct OpenOptions {
++    read: bool,
++    write: bool,
++    append: bool,
++    truncate: bool,
++    create: bool,
++    create_new: bool,
++}
++
++impl OpenOptions {
++    pub fn new() -> OpenOptions {
++        OpenOptions {
++            read: false,
++            write: false,
++            append: false,
++            truncate: false,
++            create: false,
++            create_new: false,
++        }
++    }
++
++    pub fn read(&mut self, value: bool) {
++        self.read = value;
++    }
++
++    pub fn write(&mut self, value: bool) {
++        self.write = value;
++    }
++
++    pub fn append(&mut self, value: bool) {
++        self.append = value;
++    }
++
++    pub fn truncate(&mut self, value: bool) {
++        self.truncate = value;
++    }
++
++    pub fn create(&mut self, value: bool) {
++        self.create = value;
++    }
++
++    pub fn create_new(&mut self, value: bool) {
++        self.create_new = value;
++    }
++}
++
++impl File {
++    pub fn open(path: &Path, options: &OpenOptions) -> io::Result<File> {
++        if !options.read
++            || options.write
++            || options.append
++            || options.truncate
++            || options.create
++            || options.create_new
++        {
++            return Err(io::const_error!(
++                io::ErrorKind::Unsupported,
++                "the OS init archive is read-only",
++            ));
++        }
++
++        let path = path.as_os_str().as_encoded_bytes();
++        if path.is_empty() {
++            return Err(io::const_error!(io::ErrorKind::NotFound, "empty path"));
++        }
++        pal::open(path).map(|fd| File { fd })
++    }
++
++    pub fn file_attr(&self) -> io::Result<FileAttr> {
++        unsupported()
++    }
++
++    pub fn fsync(&self) -> io::Result<()> {
++        Ok(())
++    }
++
++    pub fn datasync(&self) -> io::Result<()> {
++        Ok(())
++    }
++
++    pub fn lock(&self) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn lock_shared(&self) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn try_lock(&self) -> Result<(), TryLockError> {
++        Err(TryLockError::Error(crate::sys::unsupported_err()))
++    }
++
++    pub fn try_lock_shared(&self) -> Result<(), TryLockError> {
++        Err(TryLockError::Error(crate::sys::unsupported_err()))
++    }
++
++    pub fn unlock(&self) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn truncate(&self, _size: u64) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn read(&self, buffer: &mut [u8]) -> io::Result<usize> {
++        pal::read(self.fd, buffer)
++    }
++
++    pub fn read_vectored(&self, buffers: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
++        crate::io::default_read_vectored(|buffer| self.read(buffer), buffers)
++    }
++
++    pub fn is_read_vectored(&self) -> bool {
++        false
++    }
++
++    pub fn read_buf(&self, cursor: BorrowedCursor<'_, u8>) -> io::Result<()> {
++        crate::io::default_read_buf(|buffer| self.read(buffer), cursor)
++    }
++
++    pub fn write(&self, buffer: &[u8]) -> io::Result<usize> {
++        pal::write(self.fd, buffer)
++    }
++
++    pub fn write_vectored(&self, buffers: &[IoSlice<'_>]) -> io::Result<usize> {
++        crate::io::default_write_vectored(|buffer| self.write(buffer), buffers)
++    }
++
++    pub fn is_write_vectored(&self) -> bool {
++        false
++    }
++
++    pub fn flush(&self) -> io::Result<()> {
++        Ok(())
++    }
++
++    pub fn seek(&self, _position: SeekFrom) -> io::Result<u64> {
++        unsupported()
++    }
++
++    pub fn size(&self) -> Option<io::Result<u64>> {
++        None
++    }
++
++    pub fn tell(&self) -> io::Result<u64> {
++        unsupported()
++    }
++
++    pub fn duplicate(&self) -> io::Result<File> {
++        unsupported()
++    }
++
++    pub fn set_permissions(&self, _permissions: FilePermissions) -> io::Result<()> {
++        unsupported()
++    }
++
++    pub fn set_times(&self, _times: FileTimes) -> io::Result<()> {
++        unsupported()
++    }
++}
++
++impl Drop for File {
++    fn drop(&mut self) {
++        let _ = pal::close(self.fd);
++    }
++}
++
++impl fmt::Debug for File {
++    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
++        formatter.debug_struct("File").field("fd", &self.fd).finish()
++    }
++}
+diff --git a/library/std/src/sys/io/error/mod.rs b/library/std/src/sys/io/error/mod.rs
+index 1b6bfea2..540a5e40 100644
+--- a/library/std/src/sys/io/error/mod.rs
++++ b/library/std/src/sys/io/error/mod.rs
+@@ -32,6 +32,7 @@
+         pub use xous::*;
+     }
+     any(
++        target_os = "os",
+         target_os = "vexos",
+         target_family = "wasm",
+         target_os = "zkvm",
+diff --git a/library/std/src/sys/pal/mod.rs b/library/std/src/sys/pal/mod.rs
+index 88d9d420..51b8a18e 100644
+--- a/library/std/src/sys/pal/mod.rs
++++ b/library/std/src/sys/pal/mod.rs
+@@ -24,6 +24,10 @@
+         mod motor;
+         pub use self::motor::*;
+     }
++    target_os = "os" => {
++        mod os;
++        pub use self::os::*;
++    }
+     target_os = "trusty" => {
+         mod trusty;
+         pub use self::trusty::*;
+diff --git a/library/std/src/sys/pal/os/mod.rs b/library/std/src/sys/pal/os/mod.rs
+new file mode 100644
+index 00000000..a7bcd0fb
+--- /dev/null
++++ b/library/std/src/sys/pal/os/mod.rs
+@@ -0,0 +1,93 @@
++//! Platform abstraction for this repository's freestanding user ABI.
++
++use core::arch::asm;
++
++use crate::io;
++
++pub(crate) const STDIN: usize = 0;
++pub(crate) const STDOUT: usize = 1;
++pub(crate) const STDERR: usize = 2;
++
++const EXIT: usize = 0;
++const WRITE: usize = 1;
++const READ: usize = 2;
++const OPEN: usize = 3;
++const CLOSE: usize = 4;
++const SLEEP: usize = 6;
++
++#[inline]
++unsafe fn syscall(number: usize, arg1: usize, arg2: usize, arg3: usize) -> (usize, usize) {
++    let status: usize;
++    let value: usize;
++    unsafe {
++        asm!(
++            "ecall",
++            inlateout("a0") number => status,
++            inlateout("a1") arg1 => value,
++            in("a2") arg2,
++            in("a3") arg3,
++            options(nostack),
++        );
++    }
++    (status, value)
++}
++
++fn result(status: usize, value: usize) -> io::Result<usize> {
++    if status == 0 { Ok(value) } else { Err(io::Error::from_raw_os_error(status as i32)) }
++}
++
++pub(crate) fn read(fd: usize, buffer: &mut [u8]) -> io::Result<usize> {
++    let (status, value) = unsafe { syscall(READ, fd, buffer.as_mut_ptr().addr(), buffer.len()) };
++    result(status, value)
++}
++
++pub(crate) fn write(fd: usize, buffer: &[u8]) -> io::Result<usize> {
++    let (status, value) = unsafe { syscall(WRITE, fd, buffer.as_ptr().addr(), buffer.len()) };
++    result(status, value)
++}
++
++pub(crate) fn open(path: &[u8]) -> io::Result<usize> {
++    let (status, value) = unsafe { syscall(OPEN, path.as_ptr().addr(), path.len(), 0) };
++    result(status, value)
++}
++
++pub(crate) fn close(fd: usize) -> io::Result<()> {
++    let (status, value) = unsafe { syscall(CLOSE, fd, 0, 0) };
++    result(status, value).map(drop)
++}
++
++pub(crate) fn sleep(milliseconds: usize) {
++    let (status, _) = unsafe { syscall(SLEEP, milliseconds, 0, 0) };
++    if status != 0 {
++        abort_internal();
++    }
++}
++
++pub(crate) fn exit(code: i32) -> ! {
++    unsafe {
++        asm!(
++            "ecall",
++            in("a0") EXIT,
++            in("a1") code as isize as usize,
++            options(noreturn),
++        );
++    }
++}
++
++// SAFETY: called once by the Rust runtime before main.
++pub unsafe fn init(_argc: isize, _argv: *const *const u8, _sigpipe: u8) {}
++
++// SAFETY: called once by the Rust runtime after main.
++pub unsafe fn cleanup() {}
++
++pub fn abort_internal() -> ! {
++    exit(134)
++}
++
++pub fn unsupported<T>() -> io::Result<T> {
++    Err(unsupported_err())
++}
++
++pub fn unsupported_err() -> io::Error {
++    io::Error::UNSUPPORTED_PLATFORM
++}
+diff --git a/library/std/src/sys/random/mod.rs b/library/std/src/sys/random/mod.rs
+index e5a66dc4..1191ad78 100644
+--- a/library/std/src/sys/random/mod.rs
++++ b/library/std/src/sys/random/mod.rs
+@@ -105,6 +105,7 @@
+     }
+     any(
+         all(target_family = "wasm", target_os = "unknown"),
++        target_os = "os",
+         target_os = "xous",
+         target_os = "vexos",
+     ) => {
+@@ -121,6 +122,7 @@
+     target_os = "android",
+     all(target_family = "wasm", target_os = "unknown"),
+     all(target_os = "wasi", not(target_env = "p1")),
++    target_os = "os",
+     target_os = "xous",
+     target_os = "vexos",
+ )))]
+diff --git a/library/std/src/sys/stdio/mod.rs b/library/std/src/sys/stdio/mod.rs
+index 86d0f3fe..ba57be56 100644
+--- a/library/std/src/sys/stdio/mod.rs
++++ b/library/std/src/sys/stdio/mod.rs
+@@ -17,6 +17,10 @@
+         mod motor;
+         pub use motor::*;
+     }
++    target_os = "os" => {
++        mod os;
++        pub use os::*;
++    }
+     target_os = "solid_asp3" => {
+         mod solid;
+         pub use solid::*;
+diff --git a/library/std/src/sys/stdio/os.rs b/library/std/src/sys/stdio/os.rs
+new file mode 100644
+index 00000000..5a6824d4
+--- /dev/null
++++ b/library/std/src/sys/stdio/os.rs
+@@ -0,0 +1,60 @@
++use crate::io;
++use crate::sys::pal;
++
++pub struct Stdin;
++pub struct Stdout;
++pub struct Stderr;
++
++impl Stdin {
++    pub const fn new() -> Stdin {
++        Stdin
++    }
++}
++
++impl io::Read for Stdin {
++    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
++        pal::read(pal::STDIN, buffer)
++    }
++}
++
++impl Stdout {
++    pub const fn new() -> Stdout {
++        Stdout
++    }
++}
++
++impl io::Write for Stdout {
++    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
++        pal::write(pal::STDOUT, buffer)
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        Ok(())
++    }
++}
++
++impl Stderr {
++    pub const fn new() -> Stderr {
++        Stderr
++    }
++}
++
++impl io::Write for Stderr {
++    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
++        pal::write(pal::STDERR, buffer)
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        Ok(())
++    }
++}
++
++pub const STDIN_BUF_SIZE: usize = 1024;
++
++pub fn is_ebadf(error: &io::Error) -> bool {
++    error.raw_os_error() == Some(2)
++}
++
++pub fn panic_output() -> Option<impl io::Write> {
++    Some(Stderr::new())
++}
+diff --git a/library/std/src/sys/thread/mod.rs b/library/std/src/sys/thread/mod.rs
+index 9816981c..de5c41b9 100644
+--- a/library/std/src/sys/thread/mod.rs
++++ b/library/std/src/sys/thread/mod.rs
+@@ -10,6 +10,13 @@
+         mod motor;
+         pub use motor::*;
+     }
++    target_os = "os" => {
++        mod os;
++        pub use os::{sleep, yield_now};
++        #[expect(dead_code)]
++        mod unsupported;
++        pub use unsupported::{Thread, available_parallelism, current_os_id, set_name, DEFAULT_MIN_STACK_SIZE};
++    }
+     all(target_vendor = "fortanix", target_env = "sgx") => {
+         mod sgx;
+         pub use sgx::{Thread, current_os_id, sleep, yield_now, DEFAULT_MIN_STACK_SIZE};
+diff --git a/library/std/src/sys/thread/os.rs b/library/std/src/sys/thread/os.rs
+new file mode 100644
+index 00000000..ee8d202d
+--- /dev/null
++++ b/library/std/src/sys/thread/os.rs
+@@ -0,0 +1,18 @@
++use crate::time::Duration;
++
++pub fn yield_now() {
++    crate::sys::pal::sleep(0);
++}
++
++pub fn sleep(duration: Duration) {
++    let mut milliseconds = duration.as_millis();
++    if duration.subsec_nanos() % 1_000_000 != 0 {
++        milliseconds = milliseconds.saturating_add(1);
++    }
++
++    while milliseconds != 0 {
++        let chunk = milliseconds.min(usize::MAX as u128) as usize;
++        crate::sys::pal::sleep(chunk);
++        milliseconds -= chunk as u128;
++    }
++}
+diff --git a/library/std/src/sys/thread_local/mod.rs b/library/std/src/sys/thread_local/mod.rs
+index d48bb1c8..972fc77d 100644
+--- a/library/std/src/sys/thread_local/mod.rs
++++ b/library/std/src/sys/thread_local/mod.rs
+@@ -26,6 +26,7 @@
+ cfg_select! {
+     any(
+         all(target_family = "wasm", not(target_feature = "atomics")),
++        target_os = "os",
+         target_os = "uefi",
+         target_os = "zkvm",
+         target_os = "trusty",
+@@ -97,6 +98,7 @@ pub(crate) mod guard {
+                 all(target_os = "wasi", target_env = "p1", target_feature = "atomics")
+             )),
+             target_os = "uefi",
++            target_os = "os",
+             target_os = "zkvm",
+             target_os = "trusty",
+             target_os = "vexos",
+diff --git a/os/README.md b/os/README.md
+new file mode 100644
+index 00000000..dd44bf30
+--- /dev/null
++++ b/os/README.md
+@@ -0,0 +1,50 @@
++# Rust standard library port for OS userland
++
++This directory contains the target description, startup object, and linker
++script for building normal Rust programs with this repository's port of `std`.
++The port is pinned to the same Rust commit as `rust-toolchain.toml`; the host
++compiler supplied by rustup is reused, so building the complete Rust compiler
++is not required.
++
++The platform abstraction uses the kernel's user syscall ABI directly:
++
++- `a0 = 0`, `a1 = status`: exit
++- `a0 = 1`, `a1 = fd`, `a2 = buffer`, `a3 = length`: write
++- `a0 = 2`, `a1 = fd`, `a2 = buffer`, `a3 = length`: read
++- `a0 = 3`, `a1 = path`, `a2 = length`: open
++- `a0 = 4`, `a1 = fd`: close
++- `a0 = 6`, `a1 = milliseconds`: sleep
++
++Returning syscalls place a status in `a0` and a value in `a1`. A zero status
++denotes success. The startup object initializes `gp`, calls Rust's generated
++`main` entry point, and exits through syscall 0.
++
++## Implemented surface
++
++- `println!`, `eprintln!`, standard input, and the `Read`/`Write` APIs use file
++  descriptors 0, 1, and 2.
++- `Vec`, `String`, maps, and the rest of `alloc` use `dlmalloc` over a 4 MiB
++  zero-filled heap reserved by `os.ld`.
++- `std::fs::File` and helpers such as `std::fs::read_to_string` can read files
++  from the init archive with open/read/close.
++- `std::thread::sleep` uses the millisecond sleep syscall.
++- Single-thread synchronization and thread-local storage work. Creating new OS
++  threads is not supported because the kernel ABI does not expose that yet.
++
++The init archive is read-only, so file creation and mutation are unsupported.
++Seeking, metadata, wall/monotonic clocks, networking, subprocesses, and
++environment mutation also remain unsupported until matching kernel services
++exist.
++
++## Build
++
++From the repository root:
++
++```sh
++make ports-prepare PORTS=rust
++make -C userland/rust-std build ROOTFS_BIN="$PWD/artifacts/rootfs/bin"
++```
++
++The example under `userland/rust-std` is ordinary Rust source (no `no_std`
++attributes). It exercises allocation, formatted output, file reading, and
++sleep. The regular userland build installs it as `/bin/rust-std-demo`.
+diff --git a/os/os.ld b/os/os.ld
+new file mode 100644
+index 00000000..ea787db1
+--- /dev/null
++++ b/os/os.ld
+@@ -0,0 +1,57 @@
++OUTPUT_ARCH(riscv)
++ENTRY(_start)
++
++PHDRS
++{
++    text PT_LOAD FLAGS(5);
++    rodata PT_LOAD FLAGS(4);
++    data PT_LOAD FLAGS(6);
++}
++
++SECTIONS
++{
++    . = 0x10000;
++
++    .text : ALIGN(0x1000)
++    {
++        KEEP(*(.text._start))
++        *(.text .text.*)
++    } :text
++
++    .rodata : ALIGN(0x1000)
++    {
++        *(.rodata .rodata.*)
++        *(.srodata .srodata.*)
++    } :rodata
++
++    .data : ALIGN(0x1000)
++    {
++        __data_start = .;
++        *(.data .data.*)
++        *(.sdata .sdata.*)
++    } :data
++
++    .bss (NOLOAD) : ALIGN(0x1000)
++    {
++        __bss_start = .;
++        *(.bss .bss.*)
++        *(.sbss .sbss.*)
++        *(COMMON)
++        __bss_end = .;
++    } :data
++
++    .heap (NOLOAD) : ALIGN(0x1000)
++    {
++        __heap_start = .;
++        . += 4M;
++        __heap_end = .;
++    } :data
++
++    __global_pointer$ = MIN(__bss_start + 0x800, MAX(__data_start + 0x800, __bss_end - 0x800));
++
++    /DISCARD/ :
++    {
++        *(.eh_frame .eh_frame.*)
++        *(.note .note.*)
++    }
++}
+diff --git a/os/riscv64gc-unknown-os.json b/os/riscv64gc-unknown-os.json
+new file mode 100644
+index 00000000..65b831bd
+--- /dev/null
++++ b/os/riscv64gc-unknown-os.json
+@@ -0,0 +1,24 @@
++{
++  "arch": "riscv64",
++  "code-model": "medium",
++  "cpu": "generic-rv64",
++  "crt-objects-fallback": "false",
++  "data-layout": "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128",
++  "eh-frame-header": false,
++  "emit-debug-gdb-scripts": false,
++  "env": "",
++  "executables": true,
++  "features": "+m,+a,+f,+d,+c,+zicsr,+zifencei",
++  "linker": "rust-lld",
++  "linker-flavor": "gnu-lld",
++  "llvm-abiname": "lp64d",
++  "llvm-target": "riscv64",
++  "max-atomic-width": 64,
++  "os": "os",
++  "panic-strategy": "abort",
++  "relocation-model": "static",
++  "singlethread": true,
++  "target-endian": "little",
++  "target-pointer-width": 64,
++  "vendor": "unknown"
++}
+diff --git a/os/startup.S b/os/startup.S
+new file mode 100644
+index 00000000..a26c6ba1
+--- /dev/null
++++ b/os/startup.S
+@@ -0,0 +1,20 @@
++    .section .text._start, "ax", @progbits
++    .global _start
++    .type _start, @function
++
++_start:
++    .option push
++    .option norelax
++    la gp, __global_pointer$
++    .option pop
++    li a0, 0
++    li a1, 0
++    call main
++    mv a1, a0
++    li a0, 0
++    ecall
++1:
++    j 1b
++
++    .size _start, . - _start
++    .section .note.GNU-stack, "", @progbits

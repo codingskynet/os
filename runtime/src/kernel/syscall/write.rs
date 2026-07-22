@@ -3,7 +3,7 @@ use alloc::slice;
 use crate::arch::memory::UserMemoryGuard;
 use crate::arch::paging::Permission;
 use crate::kernel::file::FileDescriptor;
-use crate::kernel::thread::Thread;
+use crate::kernel::thread::{CurrentThread, Thread};
 use crate::mm::addr::Uva;
 use crate::nonzero_enum;
 
@@ -37,4 +37,8 @@ impl Thread {
         let buffer = unsafe { slice::from_raw_parts(addr.as_raw() as *const u8, len) };
         Ok(file.lock().write(buffer))
     }
+}
+
+pub fn write(fd: FileDescriptor, addr: usize, len: usize) -> Result<usize, Error> {
+    CurrentThread::with_mut(|thread| thread.write(fd, addr, len))
 }

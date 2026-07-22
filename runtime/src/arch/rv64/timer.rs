@@ -4,7 +4,8 @@ use crate::arch;
 use crate::arch::asm::interrupt::allow_timer;
 use crate::arch::asm::timer::set_deadline;
 use crate::kernel::clock::CLOCK_META;
-use crate::kernel::scheduler::SCHEDULER;
+use crate::kernel::scheduler::Scheduler;
+use crate::kernel::timer::Timer;
 
 const TIMER_HZ: u64 = 200;
 
@@ -15,7 +16,10 @@ pub fn init() {
 
 pub fn handle_timer() {
     schedule_next_tick();
-    SCHEDULER.run_next();
+    Timer::wake();
+
+    // TODO: check if need preemption
+    Scheduler::run_next();
 }
 
 fn schedule_next_tick() {

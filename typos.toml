@@ -7,11 +7,16 @@
 "LSR_THRE" = "LSR_THRE"
 
 # RISC-V status register bit names
-"SIE" = "SIE"
 "sie" = "sie"
+"stip" = "stip"
 
 # DWARF debug section names
 "aranges" = "aranges"
+
+[default]
+# Generated git patches contain `index <old>..<new>` object ID pairs. The
+# punctuation splits those hashes before the built-in hexadecimal filter runs.
+extend-ignore-re = ["(?m)^index [0-9a-f]+\\.\\.[0-9a-f]+.*$"]
 
 [files]
 extend-exclude = [

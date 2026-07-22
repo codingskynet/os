@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::kernel::per_core::PerCore;
+use crate::kernel::scheduler::Scheduler;
 use crate::kernel::thread;
 use crate::{arch, fs, printlnk};
 
@@ -14,6 +15,7 @@ pub fn kernel_init() -> ! {
     printlnk!("hello, init!");
 
     fs::init();
+    Scheduler::init();
 
     init_this_hart();
     start_secondary_harts();
@@ -50,6 +52,7 @@ pub unsafe extern "C" fn secondary_init(hart_id: usize) -> ! {
 fn init_this_hart() {
     arch::trap::init();
     arch::timer::init();
+    arch::external::init();
 }
 
 fn start_secondary_harts() {

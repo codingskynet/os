@@ -39,6 +39,17 @@ jobs:
       - name: Prepare MicroPython port
         run: make ports-prepare PORTS=micropython
 
+      - name: Cache Rust checkout and std build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            userland/ports/rust
+            artifacts/userland/rust-std-target
+          key: rust-std-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'userland/Makefile', 'userland/ports.toml', 'userland/patches/rust/**', 'userland/rust-std/**') }}
+
+      - name: Prepare Rust port
+        run: make ports-prepare PORTS=rust
+
       - name: Install QEMU
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
@@ -63,6 +74,11 @@ jobs:
           grep -q "page fault smoke: recovered" qemu-smoke.log
           grep -q "smoke-kernel-thread: done threads=16 iterations=32" qemu-smoke.log
           grep -q "smoke-floating-point: done threads=16 iterations=64" qemu-smoke.log
+          grep -Fq 'hello from Rust std: {"library": 7, "rust": 4, "standard": 8}' qemu-smoke.log
+          grep -Fq "read /hello.txt: welcome to init file system!" qemu-smoke.log
+          grep -Fq "Rust std sleep completed" qemu-smoke.log
+          grep -Fq "smoke-rust-std: done exit_code=0" qemu-smoke.log
+          grep -Fq "user program calls Exit(0)" qemu-smoke.log
           grep -q "hello, userland!" qemu-smoke.log
           grep -q "user program calls Exit(39)" qemu-smoke.log
           grep -o "smoke-kernel-thread: kernel thread [0-9][0-9] iter [0-9][0-9]" qemu-smoke.log \

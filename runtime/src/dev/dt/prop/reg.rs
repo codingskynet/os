@@ -10,6 +10,8 @@
 //! [Devicetree Specification v0.4]:
 //!     https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf
 
+use core::num::NonZeroU64;
+
 /// Parse a big-endian cell value of `bytes` width (1 or 2 cells = 4 or 8 bytes).
 ///
 /// Returns `u64` zero-extended.
@@ -31,6 +33,7 @@ fn read_cell_be(buf: &[u8], bytes: usize) -> Option<u64> {
 /// `address_cells` and `size_cells` are inherited from the parent node's
 /// `#address-cells` and `#size-cells` properties. The root defaults are 2
 /// address cells and 1 size cell.
+#[derive(Clone)]
 pub struct RegIter<'a> {
     data: &'a [u8],
     stride: usize,
@@ -53,18 +56,17 @@ impl<'a> RegIter<'a> {
 
 impl<'a> Iterator for RegIter<'a> {
     /// `(address, size)`; size is `None` when `#size-cells = 0`.
-    type Item = (u64, Option<u64>);
+    type Item = (u64, Option<NonZeroU64>);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.data.is_empty() || self.data.len() < self.address_len {
             return None;
         }
         let address = read_cell_be(self.data, self.address_len)?;
+        let size =
+            read_cell_be(&self.data[self.address_len..], self.size_len).and_then(NonZeroU64::new);
         let (size, consumed) = if self.size_len > 0 {
-            (
-                Some(read_cell_be(&self.data[self.address_len..], self.size_len)?),
-                self.stride,
-            )
+            (size, self.stride)
         } else {
             (None, self.address_len)
         };

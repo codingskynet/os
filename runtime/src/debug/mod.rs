@@ -25,6 +25,8 @@ pub fn smoke() {
     smoke::kernel_thread::smoke();
     #[cfg(feature = "smoke-floating-point")]
     smoke::floating_point::smoke();
+    #[cfg(feature = "smoke-rust-std")]
+    smoke::rust_std::smoke();
     #[cfg(feature = "smoke-userland")]
     smoke::userland::smoke();
 

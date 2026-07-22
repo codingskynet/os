@@ -1,0 +1,22 @@
+From 82d26aa9a31e01bd18118af4463d250e251f55d8 Mon Sep 17 00:00:00 2001
+From: OS port importer <ports@localhost>
+Date: Tue, 21 Jul 2026 17:54:30 +0900
+Subject: fix: build Rust std as rlib only
+
+---
+ library/std/Cargo.toml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
+index b7aa0b55..d245fb37 100644
+--- a/library/std/Cargo.toml
++++ b/library/std/Cargo.toml
+@@ -10,7 +10,7 @@ edition = "2024"
+ autobenches = false
+ 
+ [lib]
+-crate-type = ["dylib", "rlib"]
++crate-type = ["rlib"]
+ 
+ [dependencies]
+ alloc = { path = "../alloc", public = true }

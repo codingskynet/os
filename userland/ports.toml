@@ -6,3 +6,11 @@ url = "https://github.com/micropython/micropython.git"
 rev = "78ff170de9e32c79db6e64d3e33d2bd60002bdcd"
 dest = "ports/micropython"
 patches = "patches/micropython"
+
+[[port]]
+name = "rust"
+url = "https://github.com/rust-lang/rust.git"
+rev = "eff8269f797067c30555e77f160ec84c0ed15cd9"
+dest = "ports/rust"
+patches = "patches/rust"
+submodules = ["library/backtrace"]

@@ -1,12 +1,15 @@
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use core::cell::UnsafeCell;
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::task::{Context, Poll, Waker};
 
 use crate::arch;
 use crate::arch::interrupt::InterruptGuard;
 use crate::kernel::per_core::PerCore;
-use crate::kernel::scheduler::SCHEDULER;
+use crate::kernel::scheduler::Scheduler;
+use crate::kernel::thread::waker::ThreadWaker;
 use crate::kernel::thread::{Thread, ThreadKind, ThreadState};
 use crate::mm::MmContext;
 use crate::mm::addr::Va;
@@ -50,6 +53,31 @@ impl CurrentThread {
     /// thread. Reentrant mutable access and scheduler entry from `f` panic.
     pub fn with_mut<R>(f: impl FnOnce(&mut Thread) -> R) -> R {
         PerCore::with_mut(|per_core| per_core.current.borrow().with_mut(f))
+    }
+
+    /// Poll one operation on the current kernel thread until it completes.
+    ///
+    /// A pending operation parks the current thread. Its waker records
+    /// notifications that race with the context-switch handoff and makes an
+    /// already parked thread runnable through the scheduler.
+    pub fn wait<T>(mut poll: impl FnMut(&mut Context<'_>) -> Poll<T>) -> T {
+        let inner_waker = Self::with_mut(|thread| thread.waker());
+        let waker = Waker::from(inner_waker.clone());
+        let mut context = Context::from_waker(&waker);
+
+        loop {
+            inner_waker.consume_wake();
+
+            match poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending if inner_waker.is_waked() => continue,
+                Poll::Pending => park(),
+            }
+        }
+    }
+
+    pub fn waker() -> Arc<ThreadWaker> {
+        Self::with_mut(|thread| thread.waker())
     }
 
     pub fn replace_mm(mm: MmContext) {
@@ -215,12 +243,20 @@ pub unsafe extern "C" fn _after_switch(prev: *mut Thread) {
                         "idle is unique"
                     );
                 } else {
-                    SCHEDULER.push(Box::from_raw(prev));
+                    Scheduler::push_ready(Box::from_raw(prev));
                 }
             }
-            ThreadState::Blocked => todo!("blocked threads are not implemented"),
+            ThreadState::Parking => Scheduler::push_parked(Box::from_raw(prev)),
+            ThreadState::Parked => unreachable!("parked thread was running"),
         }
     }
+}
+
+/// Park the running thread until its async waker makes it runnable again.
+pub fn park() {
+    let _guard = InterruptGuard::new();
+    CurrentThread::with_mut(|thread| thread.begin_parking());
+    assert!(Scheduler::run_next(), "running thread has no idle fallback");
 }
 
 /// Terminate the running thread and transfer its ownership through the normal
@@ -231,6 +267,6 @@ pub fn exit(code: isize) -> ! {
     // destroyed by `_after_switch` only after execution leaves this stack.
     arch::asm::interrupt::disable();
     CurrentThread::with_mut(|current| current.set_exit(code));
-    SCHEDULER.run_next();
+    Scheduler::run_next();
     unreachable!("exited thread resumed after scheduler switch")
 }

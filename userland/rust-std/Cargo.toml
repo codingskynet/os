@@ -1,0 +1,17 @@
+[package]
+name = "rust-std-demo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+panic_abort = { path = "../ports/rust/library/panic_abort" }
+std = { path = "../ports/rust/library/std", default-features = false, features = ["compiler-builtins-mem"] }
+
+[patch.crates-io]
+rustc-std-workspace-core = { path = "../ports/rust/library/rustc-std-workspace-core" }
+rustc-std-workspace-alloc = { path = "../ports/rust/library/rustc-std-workspace-alloc" }
+
+[profile.release]
+panic = "abort"
+
+[workspace]

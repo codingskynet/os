@@ -6,18 +6,16 @@
 
 use core::mem::MaybeUninit;
 use core::num::NonZeroUsize;
-use core::ops::DerefMut;
-use core::ptr;
 
 use runtime::arch::consts::*;
 use runtime::arch::page_table::{PageTable as RawPageTable, PteFlags, vpn1, vpn2};
 use runtime::arch::paging::{PageTable, Permission as Perm};
 use runtime::arch::{asm, region};
 use runtime::asm;
+use runtime::dev::console::ConsoleConfig;
 use runtime::dev::dt::Fdt;
 use runtime::dev::dt::memory::MemoryIter;
-use runtime::dev::uart::ns16550::NS16550;
-use runtime::kernel::console::{CONSOLE, Console};
+use runtime::dev::plic::PlicConfig;
 use runtime::mm::addr::{Pa, Va};
 use runtime::mm::region::Region;
 use runtime::util::consts::*;
@@ -31,6 +29,7 @@ use runtime::util::consts::*;
 /// the temporary page tables are being built, and this function must run only
 /// on the boot hart before normal runtime initialization.
 #[unsafe(link_section = ".init.text")]
+#[allow(clippy::large_stack_frames, clippy::large_stack_arrays)]
 pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const u8) -> ! {
     const L2_PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(1 * Gi).unwrap();
     const L1_PAGE_SIZE: NonZeroUsize = HUGE_PAGE_SIZE;
@@ -58,8 +57,9 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
 
         // create direct map for physical RAM section(QEMU: 0x8000_0000 ~)
         {
-            for (addr, size) in regs {
-                let region = Region::from_size(Pa::new(addr as usize), size);
+            for reg in regs {
+                let (addr, size) = reg.expect("memory reg is incompatible with this target");
+                let region = Region::from_size(Pa::new(addr), size);
                 let mut pa = region.start.align_down(L2_PAGE_SIZE);
                 while pa < region.end {
                     // identical mapping
@@ -96,18 +96,23 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
             }
         }
 
-        // create MMIO mapping, especially for console
+        // The selected console is needed immediately after the high-address
+        // jump. Map the 1 GiB leaves containing its FDT-described MMIO region;
+        // the final page table below replaces this with page-granular mappings.
         {
-            let console = Pa::new(0x1000_0000);
-            let page = console.align_down(L2_PAGE_SIZE);
-            (*root)
-                .entry(vpn2(page.into_va()))
-                .mut_address(page)
-                .mut_flags(flag);
-            ptr::write(
-                CONSOLE.lock().deref_mut(),
-                Console::Ns16550(NS16550::new(console.into_va().as_raw())),
-            );
+            let (console, size) = ConsoleConfig::from_fdt(&fdt)
+                .expect("failed to locate console MMIO region")
+                .reg();
+            let console = Pa::new(console);
+            let region = Region::from_size(console, size);
+            let mut pa = region.start.align_down(L2_PAGE_SIZE);
+            while pa < region.end {
+                (*root)
+                    .entry(vpn2(pa.into_va()))
+                    .mut_address(pa)
+                    .mut_flags(flag);
+                pa = pa.offset(L2_PAGE_SIZE);
+            }
         }
 
         // SAFETY: the temporary tables are static, fully initialized, and map
@@ -140,7 +145,7 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
 /// The buddy allocator and physical-page metadata must already be initialized.
 /// The resulting root is leaked and remains active for the kernel lifetime.
 #[unsafe(link_section = ".init.text")]
-pub unsafe fn init_page_table(fdt: &Fdt) {
+pub unsafe fn init_page_table(fdt: &Fdt, console: &ConsoleConfig<'_>) {
     #[unsafe(link_section = ".init.text")]
     fn map_region(root: &mut PageTable, region: Region, to_va: impl Fn(Pa) -> Va, perms: Perm) {
         if region.is_empty() {
@@ -163,8 +168,9 @@ pub unsafe fn init_page_table(fdt: &Fdt) {
         assert_eq!(live_kernel.end.align_down(PAGE_SIZE), live_kernel.end);
 
         let perms = Perm::R | Perm::W;
-        for (addr, size) in regs {
-            let region = Region::from_size(Pa::new(addr as usize), size);
+        for reg in regs {
+            let (addr, size) = reg.expect("memory reg is incompatible with this target");
+            let region = Region::from_size(Pa::new(addr), size);
 
             let mut pa = region.start.align_down(PAGE_SIZE);
             let end = region.end.align_up(PAGE_SIZE);
@@ -209,17 +215,26 @@ pub unsafe fn init_page_table(fdt: &Fdt) {
     map_physical_memories(fdt, &mut root);
     map_kernel(&mut root);
 
-    // TODO: generalize from reading FDT with MMIO_MAP_ADDR
     {
-        let uart_pa = Pa::new(0x1000_0000);
-        let uart = uart_pa.into_va();
-        root.map(uart, uart_pa, PAGE_SIZE, Perm::R | Perm::W);
-        unsafe {
-            ptr::write(
-                CONSOLE.lock().deref_mut(),
-                Console::Ns16550(NS16550::new(uart.as_raw())),
-            );
-        }
+        let (console, size) = console.reg();
+        let console = Pa::new(console);
+        map_region(
+            &mut root,
+            Region::from_size(console, size),
+            Pa::into_va,
+            Perm::R | Perm::W,
+        );
+    }
+
+    {
+        let (plic, size) =
+            PlicConfig::region_from_fdt(fdt).expect("failed to locate PLIC MMIO reg");
+        map_region(
+            &mut root,
+            Region::from_size(Pa::new(plic), size),
+            Pa::into_va,
+            Perm::R | Perm::W,
+        );
     }
 
     let root = PageTable::leak(root);

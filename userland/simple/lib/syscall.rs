@@ -4,6 +4,7 @@ const WRITE: usize = 1;
 const READ: usize = 2;
 const OPEN: usize = 3;
 const CLOSE: usize = 4;
+const SLEEP: usize = 6;
 
 pub type FileDescriptor = usize;
 
@@ -73,6 +74,11 @@ pub fn close(fd: FileDescriptor) -> Result<(), CloseError> {
         Err(1) => Err(CloseError::BadFileDescriptor),
         Err(status) => Err(CloseError::Unknown(status)),
     }
+}
+
+/// Sleep for at least `milliseconds` milliseconds.
+pub fn sleep(milliseconds: usize) {
+    unsafe { syscall(SLEEP, milliseconds, 0, 0) }.expect("sleep syscall failed");
 }
 
 /// Invoke a syscall returning its status in `a0` and value in `a1`.

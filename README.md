@@ -41,6 +41,7 @@ Pass `PORTS` to operate on one or more selected ports:
 ```bash
 make ports-prepare PORTS=micropython
 make ports-status PORTS=micropython
+make ports-prepare PORTS=rust
 ```
 
 To modify a port, edit its generated checkout and commit the changes there.
@@ -74,3 +75,17 @@ make ports-clean    # remove only clean, fully synchronized checkouts
 `ports-clean` refuses to remove a checkout when it contains uncommitted or
 untracked files, or when the stored patch series does not reproduce its current
 Git tree. Use `PORTS=micropython` to clean only the selected checkout.
+
+Ports may declare a small set of pinned upstream submodules. `ports-prepare`
+initializes only those listed paths rather than recursively downloading an
+upstream project's unrelated toolchain and documentation repositories.
+
+## Rust standard library userland
+
+The `rust` port implements the repository's syscall ABI in Rust's platform
+abstraction layer. It reuses the host compiler from the pinned rustup toolchain
+and source-builds only the target libraries, avoiding a full compiler build.
+`make build` installs an ordinary Rust `std` example as
+`/bin/rust-std-demo`; it demonstrates collections, console output, read-only
+file access, and sleeping. See `userland/ports/rust/os/README.md` after running
+`make ports-prepare PORTS=rust` for the supported surface and limitations.

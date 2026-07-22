@@ -21,14 +21,13 @@ use core::{mem, ptr};
 
 use crate::arch;
 use crate::arch::consts::PAGE_SIZE;
-use crate::kernel::sync::SpinLock;
-use crate::kernel::sync::freezable::Freezable;
+use crate::kernel::sync::{LazyLock, SpinLock};
 use crate::mm::addr::{Pa, Va};
 use crate::mm::buddy::BuddyAllocator;
 use crate::mm::page_meta::{PageMeta, PageMetaMap};
 use crate::mm::slab::SlabAllocator;
 
-pub static PAGE_META_MAP: Freezable<PageMetaMap> = Freezable::new(PageMetaMap::empty());
+pub static PAGE_META_MAP: LazyLock<PageMetaMap> = LazyLock::new();
 
 pub static BUDDY: SpinLock<BuddyAllocator> = SpinLock::new(BuddyAllocator::empty());
 

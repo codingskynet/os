@@ -1,5 +1,6 @@
 //! Synchronization primitives for early kernel code.
 
-pub mod freezable;
+mod lazy_lock;
 mod spinlock;
+pub use lazy_lock::LazyLock;
 pub use spinlock::SpinLock;

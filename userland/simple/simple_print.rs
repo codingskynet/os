@@ -31,5 +31,7 @@ fn main() -> usize {
         return 5;
     }
 
+    syscall::sleep(1);
+
     39
 }

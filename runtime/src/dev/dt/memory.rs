@@ -8,17 +8,18 @@
 
 use core::num::NonZeroUsize;
 
-use crate::dev::dt::prop::reg::RegIter;
+use crate::dev::dt::reg::{CompatibleRegIter, IncompatibleRegError};
 use crate::dev::dt::{Fdt, FdtToken, FdtWalker};
 
 /// Iterator over usable memory ranges declared by `/memory*` nodes.
 ///
-/// Ranges with a zero size are ignored. Address and size cells are decoded
-/// according to the parent node's `#address-cells` and `#size-cells` values,
-/// as required for standard `reg` properties.
+/// Every yielded range has an address and nonzero size representable by the
+/// target. Incompatible tuples are returned as errors. Address and size cells
+/// are decoded according to the parent node's `#address-cells` and
+/// `#size-cells` values, as required for standard `reg` properties.
 pub struct MemoryIter<'a> {
     walker: FdtWalker<'a>,
-    reg_iter: Option<RegIter<'a>>,
+    reg_iter: Option<CompatibleRegIter<'a>>,
 }
 
 impl<'a> MemoryIter<'a> {
@@ -31,10 +32,10 @@ impl<'a> MemoryIter<'a> {
 }
 
 impl<'a> Iterator for MemoryIter<'a> {
-    type Item = (u64, NonZeroUsize);
+    type Item = Result<(usize, NonZeroUsize), IncompatibleRegError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        fn find_memory<'a>(walker: &mut FdtWalker<'a>) -> Option<RegIter<'a>> {
+        fn find_memory<'a>(walker: &mut FdtWalker<'a>) -> Option<CompatibleRegIter<'a>> {
             let mut depth = 0;
             let mut is_node = false;
             let mut is_memory = false;
@@ -72,7 +73,7 @@ impl<'a> Iterator for MemoryIter<'a> {
                         }
                         "reg" => {
                             let (address_cells, size_cells) = walker.reg_cells();
-                            reg = Some(value.into_reg(address_cells, size_cells));
+                            reg = Some(value.into_reg(address_cells, size_cells).into());
                         }
                         _ => {}
                     },
@@ -84,10 +85,8 @@ impl<'a> Iterator for MemoryIter<'a> {
         }
 
         loop {
-            if let Some((addr, Some(size))) = self.reg_iter.as_mut().and_then(Iterator::next)
-                && let Some(size) = NonZeroUsize::new(size as usize)
-            {
-                return Some((addr, size));
+            if let Some(reg) = self.reg_iter.as_mut().and_then(Iterator::next) {
+                return Some(reg);
             }
 
             self.reg_iter = Some(find_memory(&mut self.walker)?);
@@ -97,26 +96,8 @@ impl<'a> Iterator for MemoryIter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::vec::Vec;
-
     use super::*;
-
-    static QEMU_VIRT_DTB: &[u8] = include_bytes!("test_data/qemu_virt.dtb");
-
-    fn qemu_fdt() -> Fdt {
-        unsafe { Fdt::new(QEMU_VIRT_DTB.as_ptr()).unwrap() }
-    }
-
-    #[test]
-    fn qemu_virt_memory_iter_finds_ram() {
-        let fdt = qemu_fdt();
-
-        let ranges: Vec<_> = MemoryIter::new(&fdt)
-            .map(|(addr, size)| (addr, size.get()))
-            .collect();
-
-        assert_eq!(ranges, [(0x80000000, 0x08000000)]);
-    }
+    use crate::dev::dt::tests::qemu_fdt;
 
     #[test]
     fn qemu_virt_memory_iter_returns_none_after_last_range() {
@@ -124,9 +105,12 @@ mod tests {
         let mut iter = MemoryIter::new(&fdt);
 
         assert_eq!(
-            iter.next().map(|(addr, size)| (addr, size.get())),
+            iter.next()
+                .transpose()
+                .unwrap()
+                .map(|(addr, size)| (addr, size.get())),
             Some((0x80000000, 0x08000000))
         );
-        assert_eq!(iter.next(), None);
+        assert!(iter.next().is_none());
     }
 }

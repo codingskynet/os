@@ -11,7 +11,7 @@ use elf::file::Class;
 use super::{Error, Result};
 use crate::arch::consts::{LOWER_CANONICAL_END, PAGE_SIZE};
 use crate::arch::paging::Permission;
-use crate::fs::{AbsolutePath, MOUNTS};
+use crate::fs::{AbsolutePath, MOUNTS, ReadResult};
 use crate::kernel::thread::CurrentThread;
 use crate::mm::addr::{Uva, Va};
 use crate::mm::{MmContext, Pages};
@@ -126,7 +126,9 @@ fn read_all(path: &str) -> Result<Vec<u8>> {
     loop {
         let start = image.len();
         image.resize(start + PAGE_SIZE.get(), 0);
-        let read = node.read(offset, &mut image[start..]);
+        let ReadResult::Complete(read) = node.read(offset, &mut image[start..]) else {
+            return Err(Error::InvalidExecutable);
+        };
         offset += read;
         image.truncate(start + read);
         if read < PAGE_SIZE.get() {

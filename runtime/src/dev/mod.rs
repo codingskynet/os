@@ -4,5 +4,8 @@
 //! behind small abstractions so the rest of the runtime does not depend on
 //! firmware-specific data formats or MMIO register layouts.
 
+pub mod console;
+
 pub mod dt;
+pub mod plic;
 pub mod uart;

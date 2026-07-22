@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::sync::Arc;
 use core::ops::Deref;
+use core::task::{Context, Poll};
 
 use crate::fs::Fnode;
 use crate::kernel::console::ConsoleFnode;
@@ -38,13 +39,15 @@ impl<T: Fnode + 'static> From<T> for File {
 }
 
 impl File {
-    pub fn read(&mut self, buffer: &mut [u8]) -> usize {
+    pub fn poll_read(&mut self, buffer: &mut [u8], cx: &mut Context<'_>) -> Poll<usize> {
         match &mut self.kind {
-            FileKind::Regular { node, position } => {
-                let len = node.read(*position, buffer);
-                *position += len;
-                len
-            }
+            FileKind::Regular { node, position } => match node.poll_read(*position, buffer, cx) {
+                Poll::Ready(read) => {
+                    *position += read;
+                    Poll::Ready(read)
+                }
+                Poll::Pending => Poll::Pending,
+            },
         }
     }
 
@@ -142,9 +145,14 @@ impl FileContext {
         self.descriptors.get(&fd).cloned()
     }
 
-    pub fn read(&self, fd: FileDescriptor, buffer: &mut [u8]) -> Option<usize> {
+    pub fn poll_read(
+        &self,
+        fd: FileDescriptor,
+        buffer: &mut [u8],
+        cx: &mut Context<'_>,
+    ) -> Option<Poll<usize>> {
         let file = self.get(fd)?;
-        let read = file.lock().read(buffer);
+        let read = file.lock().poll_read(buffer, cx);
         Some(read)
     }
 

@@ -5,27 +5,54 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 
+use hashbrown::HashMap;
+
 use crate::arch::interrupt::InterruptGuard;
 use crate::kernel::per_core::PerCore;
-use crate::kernel::sync::SpinLock;
-use crate::kernel::thread::{CurrentThread, Thread};
+use crate::kernel::sync::{LazyLock, SpinLock};
+use crate::kernel::thread::{CurrentThread, Thread, ThreadId};
 
-pub static SCHEDULER: Scheduler = Scheduler::empty();
+static SCHEDULER: LazyLock<Scheduler> = LazyLock::new();
 
 /// FIFO scheduler for globally runnable normal kernel threads.
 pub struct Scheduler {
-    threads: SpinLock<VecDeque<Box<Thread>>>,
+    ready: SpinLock<VecDeque<Box<Thread>>>,
+    parked: SpinLock<HashMap<ThreadId, Box<Thread>>>,
 }
 
 impl Scheduler {
-    const fn empty() -> Self {
-        Self {
-            threads: SpinLock::new(VecDeque::new()),
+    pub fn init() {
+        SCHEDULER.get_or_init(|| Self {
+            ready: SpinLock::new(VecDeque::new()),
+            parked: SpinLock::new(HashMap::new()),
+        });
+    }
+
+    pub fn push_ready(thread: Box<Thread>) {
+        SCHEDULER.ready.lock().push_back(thread);
+    }
+
+    pub fn push_parked(mut thread: Box<Thread>) {
+        let mut parked = SCHEDULER.parked.lock();
+        if thread.consume_wake() {
+            thread.wake();
+            drop(parked);
+            SCHEDULER.ready.lock().push_back(thread);
+        } else {
+            thread.finish_parking();
+            assert!(
+                parked.insert(thread.id(), thread).is_none(),
+                "thread parked twice"
+            );
         }
     }
 
-    pub fn push(&self, thread: Box<Thread>) {
-        self.threads.lock().push_back(thread);
+    pub fn wake(id: ThreadId) {
+        let thread = { SCHEDULER.parked.lock().remove(&id) };
+        if let Some(mut thread) = thread {
+            thread.wake();
+            SCHEDULER.ready.lock().push_back(thread);
+        }
     }
 
     /// Switch to the next globally ready thread or this hart's idle thread.
@@ -39,9 +66,9 @@ impl Scheduler {
     /// Returns `false` only when the current idle thread has no work to run. If
     /// a switch occurs, callers that are later rescheduled observe `true` when
     /// they resume; exited callers never return from the switch.
-    pub fn run_next(&self) -> bool {
+    pub fn run_next() -> bool {
         let _guard = InterruptGuard::new();
-        let next = match self.threads.lock().pop_front() {
+        let next = match SCHEDULER.ready.lock().pop_front() {
             Some(next) => next,
             None => match PerCore::take_idle() {
                 Some(idle) => idle,

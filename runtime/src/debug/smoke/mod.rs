@@ -18,5 +18,8 @@ pub mod kernel_stack_overflow;
 #[cfg(feature = "smoke-floating-point")]
 pub mod floating_point;
 
+#[cfg(feature = "smoke-rust-std")]
+pub mod rust_std;
+
 #[cfg(feature = "smoke-userland")]
 pub mod userland;

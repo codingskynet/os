@@ -3,7 +3,7 @@ use core::{slice, str};
 use crate::arch::memory::UserMemoryGuard;
 use crate::arch::paging::Permission;
 use crate::kernel::file::FileDescriptor;
-use crate::kernel::thread::Thread;
+use crate::kernel::thread::{CurrentThread, Thread};
 use crate::mm::addr::Uva;
 use crate::nonzero_enum;
 
@@ -40,4 +40,8 @@ impl Thread {
             .map(|node| self.files.insert(node))
             .map_err(|_| Error::NotFound)
     }
+}
+
+pub fn open(addr: usize, len: usize) -> Result<FileDescriptor, Error> {
+    CurrentThread::with_mut(|thread| thread.open(addr, len))
 }
