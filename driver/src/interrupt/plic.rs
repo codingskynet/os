@@ -11,11 +11,10 @@ use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 use core::ptr;
 
-use crate::dev::console::ConsoleConfig;
-use crate::dev::dt::mmio::Mmio;
-use crate::dev::dt::reg::IncompatibleRegError;
-use crate::dev::dt::util::{DtError, FdtWalkeraExt, ValueaExt};
-use crate::dev::dt::{Fdt, FdtWalker};
+use runtime::dev::dt::mmio::Mmio;
+use runtime::dev::dt::reg::IncompatibleRegError;
+use runtime::dev::dt::util::{DtError, FdtWalkeraExt, ValueaExt};
+use runtime::dev::dt::{Fdt, FdtWalker};
 
 /// Device-tree compatible strings accepted for the legacy RISC-V PLIC.
 const COMPATIBLES: &[&str] = &["sifive,plic-1.0.0", "riscv,plic0"];
@@ -50,7 +49,11 @@ impl PlicConfig {
     #[inline(never)]
     #[allow(clippy::large_stack_frames)]
     pub fn from_fdt(fdt: &Fdt, target_interrupt: u32) -> Result<Self, Error> {
-        let plic = Self::node(fdt)?;
+        Self::from_node(fdt, Self::node(fdt)?, target_interrupt)
+    }
+
+    /// Decode the selected controller, rather than selecting a board-wide default.
+    pub fn from_node(fdt: &Fdt, plic: FdtWalker<'_>, target_interrupt: u32) -> Result<Self, Error> {
         let (base, size) = Self::region_from_node(plic.clone()).map_err(Error::Reg)?;
         let phandle = plic
             .clone()
@@ -75,8 +78,8 @@ impl PlicConfig {
 
     /// Return the physical MMIO region of the first supported PLIC node.
     ///
-    /// This lightweight form is used while constructing the direct map,
-    /// before the complete interrupt topology needs to be decoded.
+    /// This lightweight query does not map registers or decode the complete
+    /// interrupt topology. Device installation requests the mapping separately.
     pub fn region_from_fdt(fdt: &Fdt) -> Result<(usize, NonZeroUsize), Error> {
         Self::region_from_node(Self::node(fdt)?).map_err(Error::Reg)
     }
@@ -89,16 +92,6 @@ impl PlicConfig {
     /// Return the PLIC node's device-tree phandle.
     pub const fn phandle(&self) -> u32 {
         self.phandle
-    }
-
-    /// Resolve the console's single-cell global interrupt ID on this PLIC.
-    ///
-    /// The console must name this controller directly through
-    /// `interrupt-parent`. Multi-cell interrupt specifiers are not supported
-    /// by the legacy PLIC binding handled here.
-    pub fn interrupt(&self, console: &ConsoleConfig<'_>) -> Option<u32> {
-        let (parent, interrupt) = console.interrupt()?;
-        (parent == self.phandle).then_some(interrupt)
     }
 
     /// Look up the selected PLIC context assigned to `hart_id`.
@@ -287,21 +280,20 @@ impl Plic {
 
 #[cfg(test)]
 mod tests {
+    use runtime::dev::dt::tests::qemu_fdt;
+
     use super::*;
-    use crate::dev::dt::tests::qemu_fdt;
 
     #[test]
     fn qemu_virt_supervisor_topology_is_discovered() {
         let fdt = qemu_fdt();
         let config = PlicConfig::from_fdt(&fdt, 9).unwrap();
-        let console = ConsoleConfig::from_fdt(&fdt).unwrap();
 
         assert_eq!(config.region().0, 0x0c00_0000);
         assert_eq!(config.phandle(), 3);
         assert_eq!(config.contexts(), [(0, 1)]);
         assert_eq!(config.context(0), Some(1));
         assert_eq!(config.context(1), None);
-        assert_eq!(config.interrupt(&console), Some(10));
     }
 
     #[test]

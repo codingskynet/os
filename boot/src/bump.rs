@@ -66,11 +66,13 @@ impl BumpAllocator {
         }
 
         // TODO: add reserve-memory from FDT
-        self.reserve(arch::region::kernel());
-        self.reserve(Region::from_raw(
-            fdt.as_ptr(),
-            fdt.as_ptr().wrapping_add(fdt.total_size()),
-        ));
+        let kernel = arch::region::kernel();
+        self.reserve(kernel);
+        let dtb = Region::from_raw(fdt.as_ptr(), fdt.as_ptr().wrapping_add(fdt.total_size()));
+        // A board may embed its DTB in the already-reserved kernel image.
+        if !(kernel.start <= dtb.start && dtb.end <= kernel.end) {
+            self.reserve(dtb);
+        }
     }
 
     #[unsafe(link_section = ".init.text")]

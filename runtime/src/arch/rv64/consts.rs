@@ -24,7 +24,7 @@ unsafe extern "C" {
 ///
 /// 0x0000_0040_0000_0000 .. 0xffff_ffc0_0000_0000  non-canonical hole
 ///
-/// 0xffff_ffc0_0000_0000 .. 0xffff_ffd0_0000_0000  MMIO direct map, 64 GiB(TODO)
+/// 0xffff_ffc0_0000_0000 .. 0xffff_ffd0_0000_0000  MMIO mapping window, 64 GiB
 /// 0xffff_ffd0_0000_0000 .. 0xffff_fff0_0000_0000  physical direct map, 128 GiB
 /// 0xffff_fff0_0000_0000 .. 0xffff_ffff_e000_0000  reserved gap
 /// 0xffff_ffff_e000_0000 .. 0xffff_ffff_f000_0000  guarded kernel stacks, 256 MiB
@@ -67,7 +67,7 @@ const _: () = assert!(KERNEL_STACK_VMA_END == KERNEL_VMA_BASE);
 pub const KERNEL_VMA_BASE: usize = 0xffff_ffff_ffff_ffff - KERNEL_VMA_SIZE + 1;
 pub const KERNEL_VMA_SIZE: usize = 256 * Mi;
 
-pub const KERNEL_LMA_BASE: usize = 0x8000_0000;
+pub const KERNEL_LMA_BASE: usize = 0x8000_0000; // TODO: dynamic
 pub const KERNEL_VMA_OFFSET: usize = KERNEL_VMA_BASE - KERNEL_LMA_BASE;
 
 pub const PAGE_SIZE: NonZeroUsize = NonZeroUsize::new(4 * Ki).unwrap();

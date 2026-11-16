@@ -1,0 +1,13 @@
+[package]
+name = "tangnano-init"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "tangnano-init"
+path = "main.rs"
+test = false
+bench = false
+
+[features]
+mmu-fault = []

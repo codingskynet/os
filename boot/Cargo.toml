@@ -19,12 +19,11 @@ smoke-kernel-stack-overflow = ["runtime/smoke-kernel-stack-overflow"]
 [lints]
 workspace = true
 
-[[bin]]
-name = "boot"
-path = "src/main.rs"
+[lib]
 test = false
 bench = false
 
 [dependencies]
 arrayvec.workspace = true
 runtime.workspace = true
+driver.workspace = true

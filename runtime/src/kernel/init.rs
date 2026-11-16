@@ -11,20 +11,20 @@ pub static SECONDARY_ONLINE: AtomicUsize = AtomicUsize::new(0);
 // This must stay in regular .text after the .init.text phase ends, so do not
 // let it inline into init-only code.
 #[inline(never)]
-pub fn kernel_init() -> ! {
+pub fn kernel_init(initarfs: &'static [u8], init_path: &'static str) -> ! {
     printlnk!("hello, init!");
 
-    fs::init();
+    fs::init(initarfs);
     Scheduler::init();
 
     init_this_hart();
     start_secondary_harts();
 
-    thread::spawn(|| {
+    thread::spawn(move || {
         #[cfg(debug_assertions)]
         crate::debug::smoke();
 
-        fs::kernel_exec("/bin/micropython").expect("failed to run micropython");
+        fs::kernel_exec(init_path).expect("failed to run init");
     });
 
     thread::jump_to_scheduler();
@@ -51,8 +51,8 @@ pub unsafe extern "C" fn secondary_init(hart_id: usize) -> ! {
 
 fn init_this_hart() {
     arch::trap::init();
-    arch::timer::init();
-    arch::external::init();
+    crate::kernel::tick::init();
+    crate::dev::interrupt::system().init_this_hart();
 }
 
 fn start_secondary_harts() {

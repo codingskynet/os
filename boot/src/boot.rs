@@ -5,11 +5,8 @@
 //! global state.
 
 use runtime::arch::consts::PAGE_SIZE;
-use runtime::arch::external::ExternalMeta;
-use runtime::dev::console::ConsoleConfig;
 use runtime::dev::dt::{Fdt, prop};
 use runtime::kernel::clock::ClockMeta;
-use runtime::kernel::console::Console;
 use runtime::kernel::per_core::PerCore;
 use runtime::mm::addr::Pa;
 use runtime::mm::page_meta::{PageMeta, PageMetaMap, PageMetaSection};
@@ -25,6 +22,10 @@ pub struct BootInfo {
     pub boot_cpu_id: usize,
     /// Platform description handed over by firmware or the bootloader.
     pub boot_data: BootData,
+    /// Root filesystem archive retained for the lifetime of the kernel.
+    pub initarfs: &'static [u8],
+    /// First userspace program to execute.
+    pub init_path: &'static str,
 }
 
 /// Platform data supplied by firmware or the bootloader.
@@ -45,7 +46,6 @@ pub enum BootData {
 pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
     match &boot_info.boot_data {
         BootData::DeviceTree(fdt) => {
-            ClockMeta::init(fdt).expect("failed to initialize clock");
             let model = fdt
                 .query()
                 .prop("model")
@@ -59,15 +59,29 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
                 init_page_metadata(&mut alloc);
             }
 
-            let console = ConsoleConfig::from_fdt(fdt).expect("failed to locate console config");
-            Console::install(&console).expect("failed to install console");
-            unsafe { arch::paging::init_page_table(fdt, &console) };
+            unsafe { arch::paging::init_page_table(fdt) };
+
+            {
+                // TODO: mmio mapping info must be maintained
+                // Install boot devices before cloning kernel mappings.
+                let mut mmio = unsafe { runtime::mm::mmio::Mapper::new() };
+
+                unsafe { driver::Device::install_timer(fdt, &mut mmio) }
+                    .expect("failed to install timer");
+                unsafe { driver::Device::install_uart(fdt, &mut mmio) }
+                    .expect("failed to install UART");
+                unsafe { driver::Device::install_intc(fdt, &mut mmio) }
+                    .expect("failed to install interrupt controller");
+
+                ClockMeta::init();
+            }
+
+            // TODO: since after MMIO mapped, the page table cannot be changed right now.
             PerCore::init(fdt, boot_info.boot_cpu_id);
-            ExternalMeta::init(fdt, &console).expect("failed to initialize external interrupts");
         }
     }
 
-    runtime::kernel::init::kernel_init();
+    runtime::kernel::init::kernel_init(boot_info.initarfs, boot_info.init_path);
 }
 
 #[unsafe(link_section = ".init.text")]

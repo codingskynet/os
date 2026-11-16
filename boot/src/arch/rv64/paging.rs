@@ -12,10 +12,8 @@ use runtime::arch::page_table::{PageTable as RawPageTable, PteFlags, vpn1, vpn2}
 use runtime::arch::paging::{PageTable, Permission as Perm};
 use runtime::arch::{asm, region};
 use runtime::asm;
-use runtime::dev::console::ConsoleConfig;
 use runtime::dev::dt::Fdt;
 use runtime::dev::dt::memory::MemoryIter;
-use runtime::dev::plic::PlicConfig;
 use runtime::mm::addr::{Pa, Va};
 use runtime::mm::region::Region;
 use runtime::util::consts::*;
@@ -96,25 +94,6 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
             }
         }
 
-        // The selected console is needed immediately after the high-address
-        // jump. Map the 1 GiB leaves containing its FDT-described MMIO region;
-        // the final page table below replaces this with page-granular mappings.
-        {
-            let (console, size) = ConsoleConfig::from_fdt(&fdt)
-                .expect("failed to locate console MMIO region")
-                .reg();
-            let console = Pa::new(console);
-            let region = Region::from_size(console, size);
-            let mut pa = region.start.align_down(L2_PAGE_SIZE);
-            while pa < region.end {
-                (*root)
-                    .entry(vpn2(pa.into_va()))
-                    .mut_address(pa)
-                    .mut_flags(flag);
-                pa = pa.offset(L2_PAGE_SIZE);
-            }
-        }
-
         // SAFETY: the temporary tables are static, fully initialized, and map
         // both the current low execution state and the high kernel entry used
         // immediately below. Interrupts are not enabled during early boot.
@@ -145,7 +124,7 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
 /// The buddy allocator and physical-page metadata must already be initialized.
 /// The resulting root is leaked and remains active for the kernel lifetime.
 #[unsafe(link_section = ".init.text")]
-pub unsafe fn init_page_table(fdt: &Fdt, console: &ConsoleConfig<'_>) {
+pub unsafe fn init_page_table(fdt: &Fdt) {
     #[unsafe(link_section = ".init.text")]
     fn map_region(root: &mut PageTable, region: Region, to_va: impl Fn(Pa) -> Va, perms: Perm) {
         if region.is_empty() {
@@ -214,28 +193,6 @@ pub unsafe fn init_page_table(fdt: &Fdt, console: &ConsoleConfig<'_>) {
     let mut root = PageTable::new();
     map_physical_memories(fdt, &mut root);
     map_kernel(&mut root);
-
-    {
-        let (console, size) = console.reg();
-        let console = Pa::new(console);
-        map_region(
-            &mut root,
-            Region::from_size(console, size),
-            Pa::into_va,
-            Perm::R | Perm::W,
-        );
-    }
-
-    {
-        let (plic, size) =
-            PlicConfig::region_from_fdt(fdt).expect("failed to locate PLIC MMIO reg");
-        map_region(
-            &mut root,
-            Region::from_size(Pa::new(plic), size),
-            Pa::into_va,
-            Perm::R | Perm::W,
-        );
-    }
 
     let root = PageTable::leak(root);
     // SAFETY: leaking the root keeps the complete page-table tree alive for the

@@ -17,10 +17,8 @@ pub use fnode::ConsoleFnode;
 use self::buffer::{RxBuffer, TxBuffer};
 use crate::dev;
 use crate::dev::console::ConsoleConfig;
-use crate::dev::uart::ns16550::NS16550;
 use crate::dev::uart::{Read, Write};
 use crate::kernel::sync::SpinLock;
-use crate::mm::addr::Pa;
 
 #[macro_export]
 macro_rules! println {
@@ -42,23 +40,22 @@ macro_rules! print {
 
 #[macro_export]
 macro_rules! printlnk {
-    () => ({
-        let us = $crate::kernel::clock::clock_micros();
-        $crate::kernel::console::print(format_args!(
-            "[{:>5}.{:06}]\n",
-            us / $crate::util::consts::MICROS_PER_SEC,
-            us % $crate::util::consts::MICROS_PER_SEC,
-        ));
-    });
-    ($($arg:tt)*) => ({
-        let us = $crate::kernel::clock::clock_micros();
-        $crate::kernel::console::print(format_args!(
+    () => ($crate::kernel::console::print_kernel(format_args!("")));
+    ($($arg:tt)*) => ($crate::kernel::console::print_kernel(format_args!($($arg)*)));
+}
+
+/// Buffer early messages without touching an uninstalled clock or timer.
+pub fn print_kernel(args: fmt::Arguments) {
+    if let Some(us) = crate::kernel::clock::try_clock_micros() {
+        print(format_args!(
             "[{:>5}.{:06}] {}\n",
-            us / $crate::util::consts::MICROS_PER_SEC,
-            us % $crate::util::consts::MICROS_PER_SEC,
-            format_args!($($arg)*),
+            us / crate::util::consts::MICROS_PER_SEC,
+            us % crate::util::consts::MICROS_PER_SEC,
+            args
         ));
-    })
+    } else {
+        print(format_args!("{}\n", args));
+    }
 }
 
 #[macro_export]
@@ -81,14 +78,6 @@ pub fn print(args: fmt::Arguments) {
 
 static CONSOLE: SpinLock<Console> = SpinLock::new(Console::empty());
 
-type Result<T> = core::result::Result<T, Error>;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("unsupported console")]
-    Unsupported,
-}
-
 pub struct Console {
     backend: Option<Box<dyn dev::console::Console>>,
     tx: TxBuffer,
@@ -107,20 +96,12 @@ impl Console {
         }
     }
 
-    pub fn install(config: &ConsoleConfig<'_>) -> Result<()> {
-        let (base, _) = config.reg();
-        let (compatible, backend) = config
-            .compatibles()
-            .find_map(|compatible| match compatible {
-                "ns16550" | "ns16550a" => Some((
-                    compatible,
-                    Box::new(unsafe { NS16550::new(Pa::new(base).into_va().as_raw()) })
-                        as Box<dyn dev::console::Console>,
-                )),
-                _ => None,
-            })
-            .ok_or(Error::Unsupported)?;
-
+    /// Install the driver selected by boot from the firmware console node.
+    pub fn install(
+        config: &ConsoleConfig<'_>,
+        compatible: &str,
+        backend: Box<dyn dev::console::Console>,
+    ) {
         CONSOLE.lock().install_backend(backend);
 
         printlnk!(
@@ -129,8 +110,6 @@ impl Console {
             config.reg().0,
             compatible,
         );
-
-        Ok(())
     }
 
     pub fn enable_rx_interrupt() {

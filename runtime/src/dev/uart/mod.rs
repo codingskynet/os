@@ -4,8 +4,6 @@
 //! that the console layer can install without knowing each device's register
 //! layout.
 
-pub mod ns16550;
-
 /// Non-blocking byte-stream input with partial-read semantics.
 pub trait Read {
     type Error;

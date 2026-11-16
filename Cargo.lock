@@ -21,10 +21,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
+name = "board-litex-vexriscv"
+version = "0.1.0"
+dependencies = [
+ "boot",
+ "driver",
+]
+
+[[package]]
+name = "board-qemu-virt"
+version = "0.1.0"
+dependencies = [
+ "boot",
+ "driver",
+]
+
+[[package]]
 name = "boot"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "driver",
  "runtime",
 ]
 
@@ -64,6 +81,15 @@ dependencies = [
  "rustc_version",
  "syn",
  "unicode-xid",
+]
+
+[[package]]
+name = "driver"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "runtime",
+ "thiserror",
 ]
 
 [[package]]
@@ -159,6 +185,7 @@ name = "runtime-test"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
+ "derive_more",
  "extend",
  "thiserror",
  "winnow",
@@ -189,6 +216,10 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
+[[package]]
+name = "tangnano-init"
+version = "0.1.0"
 
 [[package]]
 name = "tar-no-std"

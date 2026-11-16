@@ -1,0 +1,18 @@
+[package]
+name = "board-qemu-virt"
+version.workspace = true
+edition.workspace = true
+build = "../build.rs"
+
+[[bin]]
+name = "board-qemu-virt"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+boot = { path = "../../boot" }
+driver = { workspace = true, features = ["ns16550", "plic", "riscv-sstc"] }
+
+[lints]
+workspace = true

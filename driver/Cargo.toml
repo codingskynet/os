@@ -1,0 +1,23 @@
+[package]
+name = "driver"
+version.workspace = true
+edition.workspace = true
+
+[features]
+# LiteX peripherals; select the CPU-specific interrupt controller separately.
+litex = ["liteuart", "litex-timer"]
+
+liteuart = []
+litex-timer = []
+vexriscv-intc = []
+ns16550 = []
+plic = []
+riscv-sstc = []
+
+[dependencies]
+runtime.workspace = true
+arrayvec.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

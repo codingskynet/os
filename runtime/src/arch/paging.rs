@@ -5,8 +5,10 @@ use core::ops::{Deref, DerefMut};
 use bitflags::bitflags;
 
 use crate::arch::consts::PAGE_SIZE;
+#[cfg(target_arch = "riscv64")]
+use crate::arch::page_table::vpn2;
 use crate::arch::page_table::{
-    PageTable as RawPageTable, PageTableEntry as RawPageTableEntry, PteFlags, vpn0, vpn1, vpn2,
+    PageTable as RawPageTable, PageTableEntry as RawPageTableEntry, PteFlags, vpn0, vpn1,
 };
 use crate::mm::Pages;
 use crate::mm::addr::{Pa, VarVa};
@@ -97,7 +99,10 @@ pub unsafe fn map_kernel_page_to_active(
 /// shared kernel page-table subtree and ensure the mapping is no longer in use.
 pub unsafe fn unmap_page_from_active(va: crate::mm::addr::Va) -> Option<Pa> {
     let root = unsafe { &mut *crate::arch::asm::page_table::active() };
+    #[cfg(target_arch = "riscv64")]
     let l1 = root.entry(vpn2(va)).page_table_mut()?;
+    #[cfg(target_arch = "riscv32")]
+    let l1 = root;
     let l0 = l1.entry(vpn1(va)).page_table_mut()?;
     let entry = l0.entry(vpn0(va));
     if !entry.is_valid() || !entry.is_leaf() {
@@ -118,9 +123,12 @@ fn map_in_table(table: &mut RawPageTable, va: VarVa, pa: Pa, permissions: Permis
         VarVa::Kernel(va) => va,
     };
 
-    let mut entry = PageTableCursor { table }
+    #[cfg(target_arch = "riscv64")]
+    let table = PageTableCursor { table }
         .into_entry(vpn2(va))
         .or_insert()
+        .table;
+    let mut entry = PageTableCursor { table }
         .into_entry(vpn1(va))
         .or_insert()
         .into_entry(vpn0(va));

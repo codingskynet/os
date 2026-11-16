@@ -1,6 +1,9 @@
 use alloc::boxed::Box;
+#[cfg(target_arch = "riscv64")]
 use core::arch::naked_asm;
-use core::mem::{offset_of, size_of};
+use core::mem::offset_of;
+#[cfg(target_arch = "riscv64")]
+use core::mem::size_of;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
@@ -134,6 +137,7 @@ impl PerCore {
     }
 }
 
+#[cfg(target_arch = "riscv64")]
 unsafe extern "C" {
     static secondary_stack_top: u8;
 }
@@ -150,6 +154,7 @@ unsafe extern "C" {
 ///
 /// `a0` must contain this hart's hardware ID. `PER_CORE` must have been fully
 /// published, and each secondary hart may enter exactly once.
+#[cfg(target_arch = "riscv64")]
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn secondary_install(_hart_id: usize) -> ! {
