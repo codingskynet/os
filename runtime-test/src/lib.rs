@@ -8,7 +8,6 @@
 #[cfg(test)]
 extern crate std;
 
-#[path = "../../runtime/src/dev/mod.rs"]
 pub mod dev;
 
 #[path = "../../runtime/src/kernel/sync/lazy_lock.rs"]
