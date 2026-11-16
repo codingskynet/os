@@ -29,4 +29,7 @@ else
     echo "WARN: Cargo not found, skipping typos installation."
 fi
 
+echo "==> Preparing pinned userland ports..."
+make -C "$(dirname "${BASH_SOURCE[0]}")/.." ports-prepare
+
 echo "==> Done! Run 'make run' to build and boot the kernel."

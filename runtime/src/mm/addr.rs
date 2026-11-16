@@ -9,7 +9,15 @@ use core::num::NonZeroUsize;
 
 use crate::arch::consts::*;
 
+#[cfg(target_pointer_width = "32")]
 fn fmt_addr(f: &mut fmt::Formatter<'_>, addr: usize) -> fmt::Result {
+    let addr = addr as u32;
+    write!(f, "0x{:04x}_{:04x}", (addr >> 16) & 0xffff, addr & 0xffff)
+}
+
+#[cfg(target_pointer_width = "64")]
+fn fmt_addr(f: &mut fmt::Formatter<'_>, addr: usize) -> fmt::Result {
+    let addr = addr as u64;
     write!(
         f,
         "0x{:04x}_{:04x}_{:04x}_{:04x}",
@@ -117,7 +125,7 @@ impl Pa {
     }
 }
 
-/// Virtual address in the kernel's Sv39 address layout.
+/// Virtual address in the kernel's architecture-defined address layout.
 ///
 /// `Va::into_pa` currently recognizes direct-map and kernel-image addresses;
 /// user-space and other upper-canonical ranges are not implemented.
@@ -209,7 +217,6 @@ impl Va {
             LOWER_CANONICAL_BASE..LOWER_CANONICAL_END => {
                 panic!("userspace VA cannot be directly converted")
             }
-            NON_CANONICAL_HOLE_BASE..NON_CANONICAL_HOLE_END => panic!("Invalid VA(non-canonical)"),
             DIRECT_VMA_BASE..DIRECT_VMA_END => self.0.checked_sub(DIRECT_VMA_BASE),
             KERNEL_VMA_BASE.. => self.0.checked_sub(KERNEL_VMA_OFFSET),
             _ => panic!("Undefined VA"),

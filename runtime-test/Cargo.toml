@@ -3,8 +3,13 @@ name = "runtime-test"
 version.workspace = true
 edition.workspace = true
 
+[features]
+# Exercise the RV32 address layout using the same conversion implementation.
+rv32-layout = []
+
 [dependencies]
 arrayvec.workspace = true
+derive_more.workspace = true
 extend.workspace = true
 thiserror.workspace = true
 winnow.workspace = true

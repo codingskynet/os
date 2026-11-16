@@ -51,10 +51,10 @@ use super::regs::GeneralRegs;
 use super::{Exception, Interrupt, Scause, Sstatus, TrapCause};
 use crate::arch::asm::floating_point;
 use crate::arch::consts::{KERNEL_STACK_GUARD_SIZE, KERNEL_STACK_SLOT_SIZE, PAGE_SIZE, STACK_SIZE};
-use crate::arch::timer::handle_timer;
 use crate::arch::trap::exception::handle_exception;
 use crate::asm;
 use crate::kernel::per_core::PerCore;
+use crate::kernel::tick::handle_timer;
 use crate::mm::addr::Va;
 
 // A U-mode trap needs one location from which to restore the kernel's per-core
@@ -384,7 +384,9 @@ extern "C" fn _trap_handler(frame: &mut TrapFrame) {
     match frame.cause() {
         TrapCause::Exception(exception) => handle_exception(frame, exception),
         TrapCause::Interrupt(Interrupt::SupervisorTimer) => handle_timer(),
-        TrapCause::Interrupt(Interrupt::SupervisorExternal) => super::external::handle(),
+        TrapCause::Interrupt(Interrupt::SupervisorExternal) => {
+            crate::kernel::interrupt::handle_external()
+        }
         TrapCause::Interrupt(interrupt) => panic!(
             "unhandled interrupt: {:?}, sepc={}, stval={:#x}",
             interrupt, frame.sepc, frame.stval

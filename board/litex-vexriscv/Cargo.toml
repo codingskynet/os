@@ -1,0 +1,18 @@
+[package]
+name = "board-litex-vexriscv"
+version.workspace = true
+edition.workspace = true
+build = "../build.rs"
+
+[[bin]]
+name = "board-litex-vexriscv"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+boot = { path = "../../boot" }
+driver = { workspace = true, features = ["litex", "vexriscv-intc"] }
+
+[lints]
+workspace = true

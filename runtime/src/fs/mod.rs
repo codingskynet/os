@@ -29,17 +29,15 @@ pub enum Error {
     OutOfMemory,
 }
 
-const INITARFS: &[u8] = include_bytes!("../../../artifacts/initarfs");
-
 static MOUNTS: SpinLock<Option<HashMap<AbsolutePathBuf, Box<dyn Fs>>>> = SpinLock::new(None);
 
-pub fn init() {
+pub fn init(initarfs: &'static [u8]) {
     let mut guard = MOUNTS.lock();
 
     let mut map = HashMap::new();
     map.insert(
         AbsolutePathBuf::root(),
-        Box::new(Tarfs::from(INITARFS)) as Box<dyn Fs>,
+        Box::new(Tarfs::from(initarfs)) as Box<dyn Fs>,
     );
 
     *guard = Some(map);

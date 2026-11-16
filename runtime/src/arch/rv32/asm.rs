@@ -1,0 +1,244 @@
+//! Small wrappers around RISC-V supervisor CSRs and instructions.
+//!
+//! These functions keep inline assembly localized so higher-level runtime code
+//! can express intent through named operations.
+
+use super::{Sie, Sstatus};
+use crate::asm;
+
+pub mod floating_point {
+    use super::*;
+
+    pub fn enable() {
+        unsafe {
+            asm!(
+                "csrs sstatus, {fs_dirty}",
+                fs_dirty = in(reg) Sstatus::FS_DIRTY.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+
+    pub fn disable() {
+        unsafe {
+            asm!(
+                "csrc sstatus, {fs}",
+                fs = in(reg) Sstatus::FS.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+}
+
+pub mod interrupt {
+    use super::*;
+
+    pub fn is_enabled() -> bool {
+        let sstatus: usize;
+        unsafe {
+            asm!(
+                "csrr {sstatus}, sstatus",
+                sstatus = out(reg) sstatus,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+        sstatus & Sstatus::SIE.bits() != 0
+    }
+
+    pub fn enable() {
+        unsafe {
+            asm!(
+                "csrs sstatus, {sie}",
+                sie = in(reg) Sstatus::SIE.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+
+    pub fn disable() {
+        unsafe {
+            asm!(
+                "csrc sstatus, {sie}",
+                sie = in(reg) Sstatus::SIE.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+
+    pub fn wait() {
+        unsafe { asm!("wfi", options(nostack, preserves_flags)) }
+    }
+
+    pub fn allow_timer() {
+        unsafe {
+            asm!(
+                "csrs sie, {stie}",
+                stie = in(reg) Sie::STIE.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+
+    pub fn allow_external() {
+        unsafe {
+            asm!(
+                "csrs sie, {seie}",
+                seie = in(reg) Sie::SEIE.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+}
+
+pub mod memory {
+    use super::*;
+
+    /// Enables supervisor access to user pages and returns whether it was
+    /// already enabled.
+    pub fn enable_userspace_access() -> bool {
+        let previous: usize;
+        unsafe {
+            asm!(
+                "csrrs {previous}, sstatus, {sum}",
+                previous = out(reg) previous,
+                sum = in(reg) Sstatus::SUM.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+        previous & Sstatus::SUM.bits() != 0
+    }
+
+    pub fn disable_userspace_access() {
+        unsafe {
+            asm!(
+                "csrc sstatus, {sum}",
+                sum = in(reg) Sstatus::SUM.bits(),
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+}
+
+pub mod page_table {
+    use super::*;
+    use crate::arch::page_table::{PageTable, SATP_MODE_SV32, ppn};
+    use crate::mm::addr::{Pa, Va};
+
+    const SATP_PPN_MASK: usize = (1usize << 22) - 1;
+
+    pub fn active() -> *mut PageTable {
+        let satp: usize;
+        unsafe {
+            asm!(
+                "csrr {satp}, satp",
+                satp = out(reg) satp,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+        debug_assert_eq!(satp & SATP_MODE_SV32, SATP_MODE_SV32);
+        let root = Pa::new((satp & SATP_PPN_MASK) << 12);
+        root.into_va().as_mut_ptr()
+    }
+
+    /// Activate `root` as the current Sv39 page table.
+    ///
+    /// # Safety
+    ///
+    /// `root` and every page table reachable from it must remain allocated and
+    /// valid until another root is activated. The new address space must map
+    /// the code, stack, trap vector, and other memory needed to complete the
+    /// transition. The caller must also prevent concurrent page-table mutation
+    /// or deallocation and ensure that an interrupt cannot observe an invalid
+    /// transition state.
+    pub unsafe fn activate(root: &PageTable) {
+        unsafe { activate_from_pa(Va::from(root).into_pa()) };
+    }
+
+    /// Activate the Sv39 page-table root at `pa`.
+    ///
+    /// # Safety
+    ///
+    /// `pa` must be page-aligned and identify a valid Sv39 root page table.
+    /// The root and every reachable child table must remain allocated and
+    /// valid until another root is activated. The new address space must map
+    /// all code, stack, trap, and data accesses required during the transition.
+    /// The caller must prevent concurrent mutation or deallocation and ensure
+    /// that interrupts cannot observe an invalid transition state.
+    pub unsafe fn activate_from_pa(pa: Pa) {
+        let ppn = ppn(pa);
+        debug_assert_eq!(ppn & !SATP_PPN_MASK, 0, "page-table root exceeds satp PPN");
+        let satp = SATP_MODE_SV32 | ppn;
+
+        unsafe {
+            asm!(
+                "csrw satp, {satp}",
+                "sfence.vma zero, zero",
+                satp = in(reg) satp,
+                options(nostack, preserves_flags),
+            );
+        }
+    }
+
+    pub fn flush_tlb() {
+        unsafe {
+            asm!("sfence.vma zero, zero", options(nostack, preserves_flags));
+        }
+    }
+}
+
+pub mod reg {
+    use super::*;
+
+    pub fn sp() -> usize {
+        let sp: usize;
+        unsafe {
+            asm!(
+                "mv {sp}, sp",
+                sp = out(reg) sp,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+        sp
+    }
+
+    pub fn tp() -> usize {
+        let tp: usize;
+        unsafe {
+            asm!(
+                "mv {tp}, tp",
+                tp = out(reg) tp,
+                options(nomem, nostack, preserves_flags),
+            )
+        }
+        tp
+    }
+
+    /// Install the current hart's per-core pointer in `tp`.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must remain a valid per-core pointer for as long as it is installed.
+    pub unsafe fn write_tp(ptr: usize) {
+        unsafe {
+            asm!(
+                "mv tp, {ptr}",
+                ptr = in(reg) ptr,
+                options(nostack, preserves_flags),
+            );
+        }
+    }
+}
+
+pub mod smp {
+    /// The current RV32 entry supports a single boot hart.
+    ///
+    /// # Safety
+    /// Call only after single-hart kernel initialization.
+    pub unsafe fn release_secondary_harts() {
+        assert_eq!(
+            crate::kernel::per_core::PerCore::count(),
+            1,
+            "RV32 SMP entry is not implemented"
+        );
+    }
+}

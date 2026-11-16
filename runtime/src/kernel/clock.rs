@@ -2,27 +2,32 @@
 
 use core::num::NonZeroU64;
 
-use crate::arch;
-use crate::dev::dt::Fdt;
-use crate::dev::dt::util::{DtError, FdtWalkeraExt, ValueaExt};
+use crate::dev::timer;
 use crate::kernel::sync::LazyLock;
 use crate::util::consts::{MICROS_PER_SEC, MILLIS_PER_SEC, NANOS_PER_SEC};
 
 pub static CLOCK_META: LazyLock<ClockMeta> = LazyLock::new();
 
+/// Early logging must not read timer registers until clock installation completes.
+pub fn try_clock_micros() -> Option<u64> {
+    CLOCK_META
+        .get()
+        .map(|clock| clock.elapsed_ns(timer::device().ticks()) / (NANOS_PER_SEC / MICROS_PER_SEC))
+}
+
 #[allow(unused)]
 pub fn clock() -> u64 {
-    CLOCK_META.elapsed_ns(arch::asm::time::ticks())
+    CLOCK_META.elapsed_ns(timer::device().ticks())
 }
 
 pub fn clock_micros() -> u64 {
-    let ns = CLOCK_META.elapsed_ns(arch::asm::time::ticks());
+    let ns = CLOCK_META.elapsed_ns(timer::device().ticks());
     ns / (NANOS_PER_SEC / MICROS_PER_SEC)
 }
 
 #[allow(unused)]
 pub fn clock_millis() -> u64 {
-    let ns = CLOCK_META.elapsed_ns(arch::asm::time::ticks());
+    let ns = CLOCK_META.elapsed_ns(timer::device().ticks());
     ns / (NANOS_PER_SEC / MILLIS_PER_SEC)
 }
 
@@ -39,15 +44,11 @@ impl ClockMeta {
         elapsed_ns.min(u64::MAX as u128) as u64
     }
 
-    pub fn init(fdt: &Fdt) -> Result<(), DtError> {
-        let freq = fdt
-            .lookup("/cpus")
-            .prop_or_err("timebase-frequency")?
-            .into_nonzero_u64_or_err()?;
-        let base = arch::asm::time::ticks();
+    pub fn init() {
+        let timer = timer::device();
+        let freq = timer.frequency();
+        let base = timer.ticks();
 
         CLOCK_META.get_or_init(|| Self { base, freq });
-
-        Ok(())
     }
 }

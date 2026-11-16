@@ -44,10 +44,12 @@ pub fn kernel_exec(path: &str) -> Result<Infallible> {
 fn load_elf(image: &[u8]) -> Result<(MmContext, Va)> {
     let elf = ElfBytes::<LittleEndian>::minimal_parse(image)?;
 
-    if elf.ehdr.class != Class::ELF64
-        || elf.ehdr.e_type != ET_EXEC
-        || elf.ehdr.e_machine != EM_RISCV
-    {
+    let class = if cfg!(target_pointer_width = "32") {
+        Class::ELF32
+    } else {
+        Class::ELF64
+    };
+    if elf.ehdr.class != class || elf.ehdr.e_type != ET_EXEC || elf.ehdr.e_machine != EM_RISCV {
         return Err(Error::InvalidExecutable);
     }
 

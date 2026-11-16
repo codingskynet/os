@@ -6,3 +6,4 @@
 0006-feat-enable-double-precision-math-module.patch
 0007-feat-add-friendly-REPL-help-commands.patch
 0008-feat-os-expose-current-hart-id-to-MicroPython.patch
+0009-Support-freestanding-RV32IMA-OS-userland.patch

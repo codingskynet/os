@@ -1,0 +1,135 @@
+From 89f8ff0ac182c3f604fc9c4900a48e5e631bcf61 Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Mon, 9 Nov 2026 11:12:07 +0900
+Subject: Support freestanding RV32IMA OS userland
+
+---
+ ports/os/Makefile       | 31 ++++++++++++++++++++++++++++++-
+ ports/os/README.md      | 17 +++++++++++++++++
+ ports/os/mpconfigport.h |  6 ++++++
+ 3 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/ports/os/Makefile b/ports/os/Makefile
+index 89f7c32..54ba8c0 100644
+--- a/ports/os/Makefile
++++ b/ports/os/Makefile
+@@ -1,5 +1,15 @@
+ include ../../py/mkenv.mk
+ 
++ARCH ?= riscv64gc-unknown-none-elf
++RV32 := $(filter riscv32%,$(ARCH))
++ifneq ($(RV32),)
++# The board toolchain supplies target headers and software floating-point helpers.
++CROSS_COMPILE ?= riscv-none-elf-
++CC = $(CROSS_COMPILE)gcc
++CXX = $(CROSS_COMPILE)g++
++LD = $(CC)
++AS = $(CC) -c
++else
+ # A single Zig installation provides the compiler and RISC-V cross target.
+ ZIG ?= zig
+ CC = $(ZIG) cc
+@@ -14,11 +24,19 @@ $(error Zig was not found; install Zig or set ZIG=/path/to/zig)
+ endif
+ endif
+ 
++endif
++
+ # qstr definitions (must come before including py.mk)
+ QSTR_DEFS = qstrdefsport.h
+ 
+ # MicroPython feature configurations
++ifneq ($(RV32),)
++# Freestanding GCC cannot fold the strcmp tree used by ROM text compression.
++# Plain error strings keep the image much smaller and avoid runtime scans.
++MICROPY_ROM_TEXT_COMPRESSION ?= 0
++else
+ MICROPY_ROM_TEXT_COMPRESSION ?= 1
++endif
+ 
+ # include py core make definitions
+ include $(TOP)/py/py.mk
+@@ -29,6 +47,12 @@ $(BUILD)/lib/libm_dbl/__rem_pio2_large.o: CFLAGS += -Wno-unknown-warning-option
+ INC += -I.
+ INC += -I$(TOP)
+ INC += -I$(BUILD)
++ifneq ($(RV32),)
++ARCH_FLAGS = -march=rv32ima -mabi=ilp32
++ARCH_FLAGS += -mcmodel=medany -mno-relax -msmall-data-limit=0
++AFLAGS = $(ARCH_FLAGS)
++LIBS += -lgcc
++else
+ INC += -isystem $(ZIG_LIB_DIR)/include
+ INC += -isystem $(ZIG_LIB_DIR)/libc/include/riscv64-linux-musl
+ INC += -isystem $(ZIG_LIB_DIR)/libc/include/generic-musl
+@@ -38,6 +62,7 @@ INC += -isystem $(ZIG_LIB_DIR)/libc/include/any-linux-any
+ ARCH_FLAGS = -target riscv64-freestanding -mabi=lp64d
+ ARCH_FLAGS += -mcmodel=medany -mno-relax -msmall-data-limit=0
+ AFLAGS = -target riscv64-freestanding -mabi=lp64d -mno-relax
++endif
+ CFLAGS += $(INC) -Wall -Werror -Wdouble-promotion -Wfloat-conversion -std=c99
+ CFLAGS += -ffreestanding -fno-builtin $(ARCH_FLAGS) $(COPT)
+ # Only Zig's bundled target headers are used; musl and a Linux CRT are not
+@@ -73,7 +98,11 @@ SRC_C = \
+ 	shared/runtime/stdout_helpers.c \
+ 
+ SRC_S = startup.S
++ifneq ($(RV32),)
++SRC_S_LOWER = shared/runtime/gchelper_rv32i.s
++else
+ SRC_S_LOWER = shared/runtime/gchelper_rv64i.s
++endif
+ 
+ SRC_QSTR += modsmp.c shared/readline/readline.c shared/runtime/pyexec.c
+ 
+@@ -101,6 +130,6 @@ install: $(BUILD)/firmware.elf
+ 
+ $(BUILD)/firmware.elf: os.ld $(OBJ)
+ 	$(ECHO) "LINK $@"
+-	$(Q)$(LD) $(LDFLAGS) -o $@ $(OBJ)
++	$(Q)$(LD) $(LDFLAGS) -o $@ $(OBJ) $(LIBS)
+ 
+ include $(TOP)/py/mkrules.mk
+diff --git a/ports/os/README.md b/ports/os/README.md
+index 49490c8..2374f81 100644
+--- a/ports/os/README.md
++++ b/ports/os/README.md
+@@ -63,3 +63,20 @@ The resulting stripped user executable is `ports/os/build/firmware.elf`.
+ Install the ELF in the kernel's init archive and execute it with `kernel_exec`.
+ Console input and output then use the same NS16550 console as the kernel, so
+ the REPL is interactive on QEMU's `-nographic` terminal.
++
++## Tang Nano 9K / RV32
++
++The same OS ABI also supports a freestanding RV32IMA build. Pass the Rust
++board target name and a GCC cross prefix with target C headers and libgcc:
++
++```sh
++make -C ports/os ARCH=riscv32imac-unknown-none-elf BUILD=build-rv32 \
++    CROSS_COMPILE=/path/to/bin/riscv-none-elf-
++```
++
++The Rust target name includes C, but this C build explicitly uses
++`-march=rv32ima -mabi=ilp32`. It selects the RV32 GC register helper, uses
++libgcc for double-precision arithmetic, and enables 64-bit integers so values
++such as unsigned 32-bit `struct.unpack` results fit. ROM text compression is
++disabled for freestanding GCC because its strcmp lookup tree is not folded
++with builtins disabled. The default RV64/Zig path is preserved.
+diff --git a/ports/os/mpconfigport.h b/ports/os/mpconfigport.h
+index 1edeba4..4c4eda3 100644
+--- a/ports/os/mpconfigport.h
++++ b/ports/os/mpconfigport.h
+@@ -43,7 +43,13 @@ typedef long mp_off_t;
+ #include <alloca.h>
+ 
+ #define MICROPY_HW_BOARD_NAME "os"
++#if __riscv_xlen == 32
++#define MICROPY_HW_MCU_NAME "rv32ima"
++// Match the useful integer range of the RV64 port (e.g. struct.unpack uint32).
++#define MICROPY_LONGINT_IMPL (MICROPY_LONGINT_IMPL_LONGLONG)
++#else
+ #define MICROPY_HW_MCU_NAME "rv64gc"
++#endif
+ #define MICROPY_HEAP_SIZE      (64 * 1024)
+ 
+ #define MP_STATE_PORT MP_STATE_VM

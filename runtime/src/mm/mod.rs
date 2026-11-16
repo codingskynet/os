@@ -10,6 +10,7 @@ pub use pages::Pages;
 pub mod addr;
 pub mod buddy;
 mod context;
+pub mod mmio;
 pub mod page_meta;
 mod pages;
 pub mod region;

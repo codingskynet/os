@@ -6,11 +6,9 @@
 
 pub mod asm;
 pub mod consts;
-pub mod external;
 pub mod page_table;
 pub mod regs;
 pub mod switch;
-pub mod timer;
 pub mod trap;
 
 use bitflags::bitflags;

@@ -38,8 +38,8 @@ use core::convert::Infallible;
 use core::fmt;
 use core::ptr::{read_volatile, write_volatile};
 
-use super::{Read, Write};
-use crate::dev::console::Console;
+use runtime::dev::console::Console;
+use runtime::dev::uart::{Read, Write};
 
 // PC16550D section 8.6.1, Table 2. RBR, THR, and IER require LCR.DLAB = 0.
 const REG_RBR: usize = 0x00; // Receiver Buffer Register (read)

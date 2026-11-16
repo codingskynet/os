@@ -1,12 +1,16 @@
 ARCH         		?= riscv64gc-unknown-none-elf
 HOST_ARCH			?= $(shell rustc -vV | awk '/^host:/ { print $$2 }')
-LINKER_SCRIPT		:= boot/src/arch/rv64/kernel.ld
+BOARD				?= qemu-virt
+BOARD_PACKAGE		:= board-$(BOARD)
 
 DEBUG				?= 0
 FEATURES			?=
 
+comma := ,
+
 ifneq ($(strip $(FEATURES)),)
 FEATURE_FLAGS		:= --features "$(FEATURES)"
+BOARD_FEATURE_FLAGS	:= --features "$(addprefix boot/,$(subst $(comma), ,$(FEATURES)))"
 else
 FEATURE_FLAGS		:=
 endif
@@ -26,7 +30,7 @@ PROFILE_RUSTFLAGS	:=
 endif
 
 TARGET_DIR := target/$(ARCH)/$(PROFILE)
-KERNEL_ARTIFACT := $(TARGET_DIR)/boot
+KERNEL_ARTIFACT := $(TARGET_DIR)/$(BOARD_PACKAGE)
 ARTIFACTS_DIR := artifacts
 KERNEL_ELF := $(ARTIFACTS_DIR)/$(KERNEL_BASENAME).elf
 KERNEL_DEBUG := $(ARTIFACTS_DIR)/$(KERNEL_BASENAME).debug
@@ -36,10 +40,7 @@ MEMORY     := 64M
 
 RUSTFLAGS := \
 	-C code-model=medium \
-	-C relocation-model=static \
-	-C link-arg=--script=$(LINKER_SCRIPT) \
-	-C link-arg=--no-relax \
-	-C link-arg=--orphan-handling=error
+	-C relocation-model=static
 
 .PHONY: all setup initarfs build image run clean fmt clippy typos test cargo-check doc-check open-doc check check-boot-sections FORCE
 
@@ -59,7 +60,7 @@ initarfs:
 	+$(MAKE) -C userland initarfs
 
 build: initarfs
-	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc -p boot --bin boot --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
+	RUSTFLAGS="$(RUSTFLAGS) $(PROFILE_RUSTFLAGS)" cargo rustc -p $(BOARD_PACKAGE) --bin $(BOARD_PACKAGE) --target=$(ARCH) $(CARGO_FLAGS) $(BOARD_FEATURE_FLAGS)
 
 $(ARTIFACTS_DIR):
 	mkdir -p $@
@@ -87,7 +88,7 @@ fmt:
 	./fmt
 
 clippy: initarfs
-	cargo clippy --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS) -- -D warnings
+	cargo clippy -p $(BOARD_PACKAGE) --target=$(ARCH) $(CARGO_FLAGS) $(BOARD_FEATURE_FLAGS) -- -D warnings
 
 typos:
 	typos
@@ -99,12 +100,12 @@ test:
 	cargo test -p runtime-test --lib --target=$(HOST_ARCH)
 
 cargo-check: initarfs
-	cargo check --target=$(ARCH) $(CARGO_FLAGS) $(FEATURE_FLAGS)
+	cargo check -p $(BOARD_PACKAGE) --target=$(ARCH) $(CARGO_FLAGS) $(BOARD_FEATURE_FLAGS)
 
 doc-check: initarfs
 	cargo test --doc -p runtime $(FEATURE_FLAGS) --target=$(ARCH)
 	cargo doc --no-deps -p runtime $(FEATURE_FLAGS) --target=$(ARCH)
-	cargo doc --no-deps -p boot --bin boot $(FEATURE_FLAGS) --target=$(ARCH)
+	cargo doc --no-deps -p $(BOARD_PACKAGE) -p boot $(BOARD_FEATURE_FLAGS) --target=$(ARCH)
 
 open-doc: initarfs
 	cargo doc --no-deps -p runtime $(FEATURE_FLAGS) --target=$(ARCH)

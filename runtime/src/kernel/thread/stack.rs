@@ -18,6 +18,7 @@ const _: () = assert!(SLOT_COUNT.is_multiple_of(u64::BITS as usize));
 const _: () = assert!(MAIN_STACK_END <= KERNEL_STACK_SLOT_SIZE);
 
 // TODO: explicitly allocate page tables before initialization
+#[cfg(target_arch = "riscv64")]
 const _: () = assert!(((KERNEL_STACK_VMA_BASE >> 30) & 0x1ff) == ((KERNEL_VMA_BASE >> 30) & 0x1ff));
 
 static STACK_SLOTS: SpinLock<StackSlots> = SpinLock::new(StackSlots::new());

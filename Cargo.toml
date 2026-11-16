@@ -1,9 +1,12 @@
 [workspace]
 members = [
     "boot",
+    "board/*",
+    "driver",
     "runtime",
     "runtime-test",
 ]
+default-members = ["board/qemu-virt"]
 resolver = "3"
 
 [profile.dev]
@@ -24,6 +27,7 @@ edition = "2024"
 
 [workspace.dependencies]
 runtime = { path = "runtime" }
+driver = { path = "driver", default-features = false }
 
 arrayvec = { version = "0.7.7", default-features = false }
 bitflags = { version = "2.13.0", default-features = false }

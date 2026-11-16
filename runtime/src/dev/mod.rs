@@ -1,11 +1,11 @@
 //! Device-facing interfaces used by the kernel.
 //!
-//! This module keeps hardware description parsing and concrete device drivers
-//! behind small abstractions so the rest of the runtime does not depend on
-//! firmware-specific data formats or MMIO register layouts.
+//! Hardware description parsing and service interfaces live here. Concrete
+//! implementations live in the driver crate and are installed by boot, keeping
+//! the kernel independent of board names and MMIO register layouts.
 
 pub mod console;
-
 pub mod dt;
-pub mod plic;
+pub mod interrupt;
+pub mod timer;
 pub mod uart;
