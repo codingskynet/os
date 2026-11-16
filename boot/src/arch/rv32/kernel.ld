@@ -6,7 +6,7 @@
  *  LOAD:    LiteX BIOS loads the raw binary at 0x40000000
  *
  *  RISC-V BACKGROUND
- *  On the Tang Nano 9K with a VexRiscv RV32IMA core and Sv32:
+ *  For the RV32IMA + Sv32 loader contract:
  *    - LiteX BIOS jumps to the kernel in MACHINE mode at 0x40000000
  *    - The first instruction at 0x40000000 MUST be the entry point (_start)
  *    - boot.s initializes the boot environment and enters SUPERVISOR mode
@@ -27,7 +27,7 @@ OUTPUT_ARCH(riscv)
  * Do not use absolute addresses or GP-relative relaxation in early boot code
  * unless gp and the matching virtual mapping are already established.
  *
- * build.rs injects KERNEL_LMA_BASE, KERNEL_VMA_BASE, KERNEL_VMA_OFFSET,
+ * build.rs injects KERNEL_LMA_BASE, KERNEL_VMA_BASE, KERNEL_VMA_SIZE, KERNEL_VMA_OFFSET,
  * PAGE_SIZE, HUGE_PAGE_SIZE, and STACK_SIZE from
  * runtime/src/arch/rv32/consts.rs. This script uses all except HUGE_PAGE_SIZE.
  * Keep Rust as the single source for memory-layout constants.
@@ -181,9 +181,10 @@ SECTIONS
   _kernel_end = .;
 
   /* Validate the raw-image entry and total in-memory footprint, including
-     BSS and the boot stack, against the Tang Nano 9K's 8MiB PSRAM capacity. */
+     BSS and the boot stack, against the OS kernel virtual-address window.
+     The image builder checks physical RAM capacity and firmware reservations. */
   ASSERT(_start == KERNEL_VMA_BASE, "entry must be the first image byte")
-  ASSERT(_kernel_end <= KERNEL_VMA_BASE + 0x00800000, "kernel exceeds 8MiB PSRAM")
+  ASSERT(_kernel_end - KERNEL_VMA_BASE < KERNEL_VMA_SIZE, "kernel exceeds virtual image window")
 
   /* ========================================================================
    *  Non-runtime metadata

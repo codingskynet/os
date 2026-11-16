@@ -44,6 +44,7 @@ fn main() {
                 [
                     ("KERNEL_LMA_BASE", KERNEL_LMA_BASE),
                     ("KERNEL_VMA_BASE", KERNEL_VMA_BASE),
+                    ("KERNEL_VMA_SIZE", KERNEL_VMA_SIZE),
                     ("KERNEL_VMA_OFFSET", KERNEL_VMA_OFFSET),
                     ("PAGE_SIZE", PAGE_SIZE.get()),
                     ("HUGE_PAGE_SIZE", HUGE_PAGE_SIZE.get()),
@@ -58,6 +59,7 @@ fn main() {
                 [
                     ("KERNEL_LMA_BASE", KERNEL_LMA_BASE),
                     ("KERNEL_VMA_BASE", KERNEL_VMA_BASE),
+                    ("KERNEL_VMA_SIZE", KERNEL_VMA_SIZE),
                     ("KERNEL_VMA_OFFSET", KERNEL_VMA_OFFSET),
                     ("PAGE_SIZE", PAGE_SIZE.get()),
                     ("HUGE_PAGE_SIZE", HUGE_PAGE_SIZE.get()),

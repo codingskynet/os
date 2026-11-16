@@ -7,12 +7,22 @@ edition.workspace = true
 # LiteX peripherals; select the CPU-specific interrupt controller separately.
 litex = ["liteuart", "litex-timer"]
 
+all = ["console-all", "timer-all", "interrupt-all"]
+
+# console
+console-all = ["liteuart", "ns16550"]
 liteuart = []
-litex-timer = []
-vexriscv-intc = []
 ns16550 = []
-plic = []
+
+# timer
+timer-all = ["litex-timer", "riscv-sstc"]
+litex-timer = []
 riscv-sstc = []
+
+# interrupt
+interrupt-all = ["plic", "vexriscv-intc"]
+plic = []
+vexriscv-intc = []
 
 [dependencies]
 runtime.workspace = true

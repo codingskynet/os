@@ -1,12 +1,10 @@
 [workspace]
 members = [
     "boot",
-    "board/litex-vexriscv",
-    "board/qemu-virt",
+    "board/*",
     "driver",
     "runtime",
     "runtime-test",
-    "userland/tangnano",
 ]
 default-members = ["board/qemu-virt"]
 resolver = "3"

@@ -5,7 +5,7 @@ The toy project for implementing OS
 ## How to Setup & Build & Run
 
 ```bash
-make setup          # install dependencies including QEMU
+make setup          # install dependencies and prepare pinned userland ports
 make run            # build artifacts/kernel.{elf,debug,bin} + boot on QEMU
 make run DEBUG=1    # build artifacts/kernel-debug.* + boot on QEMU
 make build          # build the boot ELF in Cargo's target directory
@@ -102,110 +102,51 @@ runtime depends on neither board nor driver crates.
 
 Select a board with `cargo build -p board-qemu-virt --release` or
 `make build BOARD=qemu-virt`. Plain `cargo build` selects QEMU virt via the
-workspace default member. Use `make tangnano-image` for the RV32 target and
-userland. Smoke tests remain in `boot`: use `make run FEATURES=smoke` or
+workspace default member. The FPGA repository composes RV32 firmware images; see below. Smoke tests remain in `boot`: use `make run FEATURES=smoke` or
 `cargo build -p board-qemu-virt --release --features boot/smoke`.
 See [driver discovery](driver/README.md) for matching rules and boot ordering.
 
-## Tang Nano 9K (RV32IMA + Sv32)
+## LiteX / VexRiscv (RV32IMA + Sv32)
 
-The existing `linux-spi-lcd` gateware in the sibling `TangNano-9K-example`
-repository contains a VexRiscv CPU with Sv32. Its BIOS must be built with the
-firmware DTB handoff below; old gateware that passes a null a1 is unsupported.
-The board target reuses this OS's buddy/slab allocators, guarded kernel stacks,
-scheduler, VFS/TarFS, ELF loader, and syscall ABI. It adds RV32 integer trap and
-context-switch code, two-level Sv32 page tables, a LiteX UART driver, and LiteX
-external interrupt/timer support. C, F, and D instructions are disabled; A is
-used for the existing kernel atomics. The CPU runs at 27MHz with 8MiB PSRAM.
+`board-litex-vexriscv` selects LiteUART, LiteX timer and VexRiscv interrupts.
+The OS owns RV32 entry/trap/context code, Sv32 page tables, allocators,
+scheduler, VFS/TarFS, ELF loading, syscall ABI and freestanding userland ports.
+Firmware passes a0=boot hart and a1=physical FDT pointer. The OS discovers
+RAM, console, timer, clocks and IRQ routing from FDT and reserves the DTB.
+It does not generate a DTB or encode board pinouts, RAM capacity or clocks.
 
-Install the pinned toolchain with `rustup toolchain install` if needed. It needs
-`rust-src` and `llvm-tools`. The build uses `-Zbuild-std` to rebuild core/alloc
-without C/Zca, since the standard RV32IMAC libraries contain compressed code.
+The current RV32 load address is `0x40000000`, kernel virtual base
+`0xff000000`, and userspace is below `0x80000000`. The physical direct map
+uses `VA = PA + 0x90000000`; MMIO starts at virtual `0x80000000` and guarded
+kernel stacks at `0xfec00000`. These are OS/loader ABI constraints, not board
+capacity discovery. The linker checks the 16MiB kernel virtual-address window;
+the external image builder checks physical RAM capacity and firmware reservations.
 
-```sh
-make tangnano-image
-```
+The sibling FPGA repository owns image composition and deployment:
+[`linux-spi-lcd`](../TangNano-9K-example/linux-spi-lcd/README.md).
+Run `make -C ../TangNano-9K-example/linux-spi-lcd rust-image BOARD=primer20k`
+(or `BOARD=nano9k`) there. Cross-toolchain lookup, board description, staging
+rootfs, LiteX FBI length/CRC, Flash offsets, programming and UART probes belong
+there. This OS repository must not depend on that repository to build the
+kernel or implement drivers.
 
-The normal build includes the existing MicroPython REPL as `/bin/micropython`
-and boots it directly in U-mode. It uses the sibling FPGA repository's xPack
-GCC by default; override `RV32_CROSS_COMPILE` to use another cross prefix.
-
-Outputs are `artifacts/tangnano/kernel.{elf,bin,map}` and `kernel-flash.bin`
-(LiteX FBI length/CRC header), plus an RV32 staging rootfs. Both architectures
-embed the common `artifacts/initarfs` path; rebuild the archive for the target
-architecture when switching builds. The image loads at
-`0x40000000` and executes at virtual `0xff000000`. Like RV64, direct-map
-addresses use `VA = PA + DIRECT_VMA_BASE`: RAM at `0x40000000` maps to
-`0xd0000000`. Userspace is below `0x80000000`. Device installation maps LiteX
-CSR resources into the MMIO virtual window starting at `0x80000000`; virtual
-register addresses are independent of their physical addresses. Kernel stacks
-share one Sv32 subtree at `0xfec00000`.
-
-The OS does not generate, compile in, or upload a board DTB. The FPGA project
-owns it: `board_dtb.py` generates the FDT from the finalized LiteX memory/CSR,
-clock, CPU and interrupt metadata. `firmware.py` embeds it in the existing
-BIOS ROM. On boot, BIOS copies it to the last RAM page (currently `0x407ff000`)
-and passes a0=boot hart, a1=physical DTB pointer. The OS discovers RAM, UART,
-timer, clock frequency and IRQ routing from that pointer, and reserves the DTB
-memory before enabling the runtime allocator. DTB placement is a firmware
-choice, not an address compiled into this OS.
-
-Build and verify from the FPGA repository (close any serial terminal first):
+For a prepared RV32 `artifacts/initarfs`, the kernel-only invocation is:
 
 ```sh
-cd ../TangNano-9K-example/linux-spi-lcd
-./build-fpga.sh
-# Test the new FPGA design and OS in RAM without changing Flash:
-.venv/bin/python boot-rust.py --bitstream build/soc/gateware/impl/pnr/project.fs
-# Install both matching images, then verify Flash autoboot:
-.venv/bin/python boot-rust.py --persistent --fpga-flash build/soc/gateware/impl/pnr/project.fs
-# Later kernel-only changes do not need to rewrite FPGA configuration:
-.venv/bin/python boot-rust.py --persistent
-.venv/bin/python boot-rust.py --autoboot
+RUSTFLAGS='-C target-feature=-c,-zca -C relocation-model=static -C code-model=medium' \
+  cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+  --release --target riscv32imac-unknown-none-elf -p board-litex-vexriscv
 ```
 
-The persistent command replaces the external SPI Flash OS image. Supplying
-`--fpga-flash` also replaces FPGA configuration Flash, including BIOS and its
-DTB. The SD card is untouched. To restore the previously
-built Linux image, run `program-kernel-uart.py --image build/linux-flash.bin`
-from this directory, then reload FPGA configuration with Gowin Programmer's
-operation 1. Keep the Linux image backup when switching OS images.
+Use the pinned nightly with `rust-src` and `llvm-tools`; core/alloc must be
+rebuilt without C/Zca for RV32IMA. Userland `ARCH` and `CROSS_COMPILE` are
+architecture/toolchain inputs and remain in the MicroPython port. The image
+currently starts `/bin/micropython` in U-mode, with software double precision,
+read-only module imports, `math`, and `smp.hart_id()`. Rust-std userland remains
+RV64-only. The unused diagnostic `userland/tangnano` is legacy OS test code;
+renaming/removing it is independent of image deployment.
 
-The default prompt is MicroPython's `>>>`, as on the RV64 OS. The RV32 port
-keeps the existing core modules, read-only imports, `math`, and `smp.hart_id()`.
-It uses software double-precision arithmetic (no FPU instructions) and 64-bit
-integer objects for values that exceed RV32's small-integer range. Static files
-such as `eratosthenes.py` and `rk4_harmonic_oscillator.py` are included in the
-board rootfs. The port changes are preserved as patch 0009 in the pinned
-MicroPython patch series, and `make ports-verify PORTS=micropython` checks them.
-
-Connect a serial terminal at 115200 baud and press Enter:
-
-```sh
-screen /dev/cu.usbserial-1101 115200
-```
-
-The diagnostic Rust shell and its MMU isolation probe remain in
-`userland/tangnano` for future use. The current image build only packages and
-starts MicroPython; Rust-shell and MMU-fault boot selection are not exposed.
-UART TX is mirrored to the existing LCD hardware. Rust-std userland and hardware
-floating-point smoke tests remain RV64-only.
-
-Hardware validation on 2026-11-09: the kernel reached the RV32 U-mode shell
-with Sv32 active; UART input/output, file reads and timer sleep/wakeup passed.
-The final 520192-byte image boots the original MicroPython REPL directly from
-external Flash after FPGA configuration reload, with no UART kernel upload.
-Arithmetic, software-double math, the existing prime/RK4 scripts and GC passed
-on the board. The boot log is
-`../TangNano-9K-example/linux-spi-lcd/build/firmware-dtb-persistent.log`.
-A separate smoke image's U-mode read of `0xc0000000` generated a load-page
-fault. The board kernel passed Clippy with warnings denied; all 38 existing
-host tests passed, and the original RV64 boot target passed `cargo check`
-using a static-files-only rootfs for compile validation. Full RV64 userland
-ports and QEMU execution were not part of that check.
-
-Firmware DTB handoff was verified in both temporary RAM boot and Flash autoboot:
-BIOS copied its 1286-byte ROM DTB to `0x407ff000`; the OS reported exactly the
-same a1 pointer and hart 0, with no DTB upload or DTB inside the kernel image.
-The matching FPGA configuration and OS images are installed persistently.
-MicroPython, software math, prime/RK4 imports and GC passed after Flash boot.
+Both architectures currently embed `artifacts/initarfs`; rebuild it when
+switching architecture and do not build different images concurrently in one
+checkout. The root Makefile's full userland build remains RV64-oriented;
+selecting `BOARD=litex-vexriscv` alone does not compose an RV32 rootfs.

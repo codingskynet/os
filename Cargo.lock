@@ -218,10 +218,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tangnano-init"
-version = "0.1.0"
-
-[[package]]
 name = "tar-no-std"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

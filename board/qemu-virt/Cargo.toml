@@ -12,7 +12,7 @@ bench = false
 
 [dependencies]
 boot = { path = "../../boot" }
-driver = { workspace = true, features = ["ns16550", "plic", "riscv-sstc"] }
+driver = { workspace = true, features = ["all"] }
 
 [lints]
 workspace = true
