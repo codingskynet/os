@@ -33,13 +33,10 @@ pub unsafe fn enable_mmu_and_jump(entry: usize, hart_id: usize, dtb_ptr: *const 
     unsafe {
         let fdt = Fdt::new(dtb_ptr).expect("invalid firmware DTB");
         let offset = kernel_vma_offset();
-        let flags = PteFlags::V
-            | PteFlags::R
-            | PteFlags::W
-            | PteFlags::X
-            | PteFlags::A
-            | PteFlags::D
-            | PteFlags::memory_attributes(MemoryType::Normal);
+
+        // Caution: memory_attributes is not applied before MMU
+        let flags =
+            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::A | PteFlags::D;
         let mut table = BootstrapPageTable::<ROOT_LEVEL>::new(flags);
         build_bootstrap_mappings(&fdt, |region, offset| table.map(region, offset));
         asm::page_table::activate_from_pa(table.root_pa());
