@@ -10,17 +10,13 @@ mod util {
     }
 }
 
+#[path = "../runtime/src/arch"]
 mod arch {
-    pub mod rv32 {
-        pub mod consts {
-            include!("../runtime/src/arch/rv/rv32/consts.rs");
-        }
-    }
-    pub mod rv64 {
-        pub mod consts {
-            include!("../runtime/src/arch/rv/rv64/consts.rs");
-        }
-    }
+    mod linker_consts;
+    #[path = "rv/rv32/consts.rs"]
+    pub mod rv32;
+    #[path = "rv/rv64/consts.rs"]
+    pub mod rv64;
 }
 
 fn main() {
@@ -43,7 +39,7 @@ fn link(target_arch: &str) {
     println!("cargo:rerun-if-changed={manifest_dir}/../build.rs");
     let (arch, symbols) = match target_arch {
         "riscv32" => {
-            use self::arch::rv32::consts::*;
+            use self::arch::rv32::*;
             (
                 "rv32",
                 [
@@ -57,7 +53,7 @@ fn link(target_arch: &str) {
             )
         }
         "riscv64" => {
-            use self::arch::rv64::consts::*;
+            use self::arch::rv64::*;
             (
                 "rv64",
                 [

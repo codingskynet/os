@@ -1,10 +1,7 @@
 use core::num::NonZeroUsize;
 
+pub use crate::arch::linker_consts::*;
 use crate::util::consts::*;
-
-#[path = "../../linker_consts.rs"]
-mod linker_consts;
-pub use linker_consts::*;
 
 /// Sv32 uses the full 32-bit virtual address space, with no non-canonical hole.
 /// Like RV64, the upper half places MMIO before the physical direct map,

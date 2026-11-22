@@ -53,11 +53,13 @@ impl<'a> MemoryMap<'a> {
         })
     }
 
-    /// Yield representable reservations, rounding no-map ranges out to page boundaries.
+    /// Visit representable reservations, rounding no-map ranges out to page boundaries.
     #[unsafe(link_section = ".init.text")]
-    fn reservations(&self) -> impl Iterator<Item = (Region, bool)> {
-        reservations(self.fdt).filter_map(|reservation| {
-            let start = Pa::try_from(reservation.base).ok()?;
+    fn for_each_reservation(&self, mut visit: impl FnMut(Region, bool)) {
+        for reservation in reservations(self.fdt) {
+            let Ok(start) = Pa::try_from(reservation.base) else {
+                continue;
+            };
             let end = reservation
                 .base
                 .checked_add(reservation.size)
@@ -73,20 +75,22 @@ impl<'a> MemoryMap<'a> {
                 )
             } else {
                 Region::new(start, Pa::new(end))
-            }?;
-            Some((region, reservation.no_map))
-        })
+            };
+            if let Some(region) = region {
+                visit(region, reservation.no_map);
+            }
+        }
     }
 
     /// Visit complete RAM pages that can be included in ordinary RAM mappings.
     #[unsafe(link_section = ".init.text")]
     pub(crate) fn for_each_mappable_ram(&self, mut visit: impl FnMut(Region)) {
         let mut excluded = RegionSet::new();
-        for (region, no_map) in self.reservations() {
+        self.for_each_reservation(|region, no_map| {
             if no_map {
                 excluded.insert(region);
             }
-        }
+        });
         for pages in self.ram_regions().filter_map(whole_pages) {
             for gap in excluded.gaps(pages) {
                 visit(gap);
@@ -134,9 +138,7 @@ impl BumpAllocator {
             debug!("bump: register memory {region:?}");
             self.banks.push(RamBank::new(region));
         }
-        for (region, _) in map.reservations() {
-            self.reserve(region);
-        }
+        map.for_each_reservation(|region, _| self.reserve(region));
         self.reserve(arch::region::kernel());
         self.reserve(Region::from_raw(
             fdt.as_ptr(),

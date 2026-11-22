@@ -1,4 +1,7 @@
 //! Select either target's real address constants for host-side conversion tests.
+#[path = "../../runtime/src/arch/linker_consts.rs"]
+mod linker_consts;
+
 #[cfg(feature = "rv32-layout")]
 #[path = "../../runtime/src/arch/rv/rv32/consts.rs"]
 pub mod consts;

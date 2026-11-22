@@ -3,6 +3,7 @@
 //! The selected architecture supplies the low-level interfaces used by the runtime.
 
 pub mod interrupt;
+pub mod linker_consts;
 pub mod memory;
 pub mod region;
 

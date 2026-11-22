@@ -1,10 +1,7 @@
 use core::num::NonZeroUsize;
 
+pub use crate::arch::linker_consts::*;
 use crate::util::consts::*;
-
-#[path = "../../linker_consts.rs"]
-mod linker_consts;
-pub use linker_consts::*;
 
 /// Sv39 uses 39-bit virtual addresses sign-extended to 64 bits.
 ///

@@ -27,9 +27,10 @@ impl<const ROOT_LEVEL: u32> BootstrapPageTable<ROOT_LEVEL> {
         #[unsafe(link_section = ".init.bss")]
         static mut TABLES: [MaybeUninit<PageTable>; 32] = [const { MaybeUninit::uninit() }; 32];
 
+        let tables = &raw mut TABLES;
         Self {
             root: unsafe { &mut *PageTable::init_raw_mut(&raw mut ROOT) },
-            tables: unsafe { &mut *(&raw mut TABLES) },
+            tables: unsafe { &mut *tables },
             flags,
         }
     }
