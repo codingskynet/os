@@ -6,7 +6,7 @@
 
 use runtime::arch::consts::*;
 use runtime::arch::page_table::PteFlags;
-use runtime::arch::paging::{MemoryType, PageTable, Permission as Perm};
+use runtime::arch::paging::{PageTable, Permission as Perm};
 use runtime::arch::{asm, region};
 use runtime::asm;
 use runtime::dev::dt::Fdt;
