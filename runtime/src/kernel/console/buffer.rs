@@ -88,6 +88,10 @@ impl RxBuffer {
         ring: RingBuffer::EMPTY,
     };
 
+    pub fn free_space(&self) -> usize {
+        RX_CAPACITY - self.ring.len
+    }
+
     pub fn push(&mut self, byte: u8) -> bool {
         self.ring.push(byte)
     }

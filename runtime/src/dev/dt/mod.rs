@@ -75,6 +75,10 @@ impl FdtHeader {
         unsafe { be32(self.ptr, 12) }
     }
 
+    pub fn off_mem_rsvmap(&self) -> u32 {
+        unsafe { be32(self.ptr, 16) }
+    }
+
     pub fn size_dt_strings(&self) -> u32 {
         unsafe { be32(self.ptr, 32) }
     }
@@ -123,6 +127,18 @@ impl Fdt {
     /// Total size in bytes of the FDT blob, as reported by its header.
     pub fn total_size(&self) -> usize {
         self.header.total_size() as usize
+    }
+
+    /// Complete 16-byte slots from the reservation block offset to the end of
+    /// the blob. The first zero address/size pair terminates the table.
+    pub fn reservation_entries(&self) -> &[[u8; 16]] {
+        let offset = self.header.off_mem_rsvmap() as usize;
+        let remaining = self
+            .total_size()
+            .checked_sub(offset)
+            .expect("reservation block outside DTB");
+        // Fdt::new requires a readable blob. Byte arrays need no alignment.
+        unsafe { slice::from_raw_parts(self.ptr.add(offset).cast(), remaining / 16) }
     }
 
     /// Navigate to the node identified by a device-tree path such as

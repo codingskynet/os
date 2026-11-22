@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+// Board description portions Copyright (C) 2022 Samuel Holland <samuel@sholland.org>
+// Upstream board files and local changes are listed in ../README.md.
+/dts-v1/;
+#include "sun20i-d1.dtsi"
+
+/ {
+	model = "Clockwork DevTerm (R-01)";
+	compatible = "clockwork,r-01-devterm-v3.14", "allwinner,sun20i-d1";
+	aliases {
+		mmc0 = &mmc0;
+	};
+	chosen {
+		stdout-path = "/reserved-memory/framebuffer@7fd00000";
+	};
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		opensbi@40000000 {
+			reg = <0x40000000 0x200000>;
+			no-map;
+		};
+
+		framebuffer@7fd00000 {
+			compatible = "clockwork,devterm-lcd-console";
+			reg = <0x7fd00000 0x258000>;
+			no-map;
+		};
+
+		usb-dma@7ff60000 {
+			reg = <0x7ff60000 0x2000>;
+			no-map;
+		};
+	};
+
+	soc {
+		clint@14000000 {
+			compatible = "allwinner,sun20i-d1-clint", "thead,c900-clint";
+			reg = <0x14000000 0x10000>;
+			interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
+		};
+	};
+};
+
+&dcxo {
+	clock-frequency = <24000000>;
+};
+
+&mmc0 {
+	broken-cd;
+	bus-width = <4>;
+	disable-wp;
+	pinctrl-0 = <&mmc0_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&usb_otg {
+    dr_mode = "peripheral";
+    status = "okay";
+};
+
+&ehci1 {
+    status = "okay";
+};
+
+&usbphy {
+    status = "okay";
+};

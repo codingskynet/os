@@ -1,15 +1,15 @@
 //! RV64 Sstc timer; firmware must permit supervisor time/stimecmp access.
+#![cfg(target_arch = "riscv64")]
 use core::num::{NonZeroU32, NonZeroU64};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use runtime::arch::asm::interrupt::allow_timer;
 use runtime::arch::asm::time::ticks;
 use runtime::arch::asm::timer::set_deadline;
+use runtime::dev::discovery::{self, Error};
 use runtime::dev::dt::Fdt;
 use runtime::dev::timer::TimerDevice;
 use runtime::kernel::sync::LazyLock;
-
-use crate::Error;
 
 #[derive(Clone, Copy)]
 pub struct Config {
@@ -22,7 +22,7 @@ pub struct Timer {
 static TIMER: LazyLock<Timer> = LazyLock::new();
 impl Config {
     pub fn probe(fdt: &Fdt) -> Result<Option<Self>, Error> {
-        if !crate::discovery::sstc_supported(fdt)? {
+        if !discovery::sstc_supported(fdt)? {
             return Ok(None);
         }
         let frequency = fdt
@@ -65,3 +65,14 @@ impl TimerDevice for Timer {
         true
     }
 }
+
+pub const DRIVER: boot::drivers::TimerDriver = boot::drivers::TimerDriver {
+    probe: |fdt| Ok(Config::probe(fdt)?.is_some()),
+    install: |fdt, _mmio| {
+        let config = Config::probe(fdt)?.ok_or("timer disappeared after discovery")?;
+        Ok(boot::drivers::InstalledTimer {
+            device: config.install(),
+            irq: None,
+        })
+    },
+};

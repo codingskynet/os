@@ -1,4 +1,5 @@
 //! Kernel policy at the external interrupt trap boundary.
+
 use crate::dev::interrupt;
 use crate::kernel::scheduler::Scheduler;
 

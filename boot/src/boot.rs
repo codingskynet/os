@@ -4,17 +4,18 @@
 //! address space, and then calls [`kernel_boot`] to initialize runtime-owned
 //! global state.
 
-use runtime::arch::consts::PAGE_SIZE;
+use runtime::arch::consts::*;
 use runtime::dev::dt::{Fdt, prop};
 use runtime::kernel::clock::ClockMeta;
 use runtime::kernel::per_core::PerCore;
 use runtime::mm::addr::Pa;
 use runtime::mm::page_meta::{PageMeta, PageMetaMap, PageMetaSection};
+use runtime::mm::region::Region;
 use runtime::mm::{BUDDY, PAGE_META_MAP};
 use runtime::printlnk;
 
 use crate::arch;
-use crate::bump::{BUMP_ALLOCATOR, BumpAllocator};
+use crate::bump::{BUMP_ALLOCATOR, BumpAllocator, MAX_RAM_BANKS, MemoryMap};
 
 /// Information passed from architecture-specific boot code to common boot.
 pub struct BootInfo {
@@ -34,6 +35,35 @@ pub enum BootData {
     DeviceTree(Fdt),
 }
 
+/// Build the direct RAM map and both aliases of the executing kernel image.
+///
+/// Called before translation is enabled, while linker symbols resolve to physical addresses.
+#[unsafe(link_section = ".init.text")]
+pub(crate) fn build_bootstrap_mappings(fdt: &Fdt, mut map: impl FnMut(Region, usize)) {
+    let kernel = Region::new(
+        Pa::new(&raw const _kernel_start as usize),
+        Pa::new(&raw const _kernel_end as usize),
+    )
+    .unwrap();
+    let dtb_start = fdt.as_ptr() as usize;
+    let dtb_end = dtb_start
+        .checked_add(fdt.total_size())
+        .expect("DTB range overflow");
+    let mut kernel_in_ram = false;
+    let mut dtb_in_ram = false;
+    MemoryMap::new(fdt).for_each_mappable_ram(|ram| {
+        map(ram, DIRECT_VMA_BASE);
+        kernel_in_ram |= ram.start <= kernel.start && kernel.end <= ram.end;
+        dtb_in_ram |= ram.start <= dtb_start && dtb_end <= ram.end;
+    });
+    assert!(
+        kernel_in_ram && dtb_in_ram,
+        "kernel or DTB outside mappable RAM"
+    );
+    map(kernel, 0);
+    map(kernel, kernel_vma_offset());
+}
+
 /// Kernel entry point.
 ///
 /// `boot_info` describes the boot CPU and any platform data supplied by the
@@ -43,7 +73,7 @@ pub enum BootData {
 ///
 /// It must be called with a valid stack pointer and BSS already zeroed.
 #[unsafe(link_section = ".init.text")]
-pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
+pub unsafe fn kernel_boot<D: crate::BootDevice>(boot_info: BootInfo) -> ! {
     match &boot_info.boot_data {
         BootData::DeviceTree(fdt) => {
             let model = fdt
@@ -56,7 +86,7 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
             {
                 let mut alloc = BUMP_ALLOCATOR.lock();
                 alloc.init(fdt);
-                init_page_metadata(&mut alloc);
+                PAGE_META_MAP.get_or_init(|| init_page_metadata(&alloc));
             }
 
             unsafe { arch::paging::init_page_table(fdt) };
@@ -65,14 +95,8 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
                 // TODO: mmio mapping info must be maintained
                 // Install boot devices before cloning kernel mappings.
                 let mut mmio = unsafe { runtime::mm::mmio::Mapper::new() };
-
-                unsafe { driver::Device::install_timer(fdt, &mut mmio) }
-                    .expect("failed to install timer");
-                unsafe { driver::Device::install_uart(fdt, &mut mmio) }
-                    .expect("failed to install UART");
-                unsafe { driver::Device::install_intc(fdt, &mut mmio) }
-                    .expect("failed to install interrupt controller");
-
+                unsafe { D::DRIVERS.install(fdt, &mut mmio) }.expect("failed to install devices");
+                unsafe { D::install_power(fdt, &mut mmio) }.expect("failed to install board power");
                 ClockMeta::init();
             }
 
@@ -85,53 +109,59 @@ pub unsafe fn kernel_boot(boot_info: BootInfo) -> ! {
 }
 
 #[unsafe(link_section = ".init.text")]
-fn init_page_metadata(allocator: &mut BumpAllocator) {
-    extern crate alloc;
-    use alloc::boxed::Box;
+fn init_page_metadata(allocator: &BumpAllocator) -> PageMetaMap {
+    // A fully reserved bank may need its metadata to live in another bank.
+    // Allocate every section before handing any of the remaining pages to the buddy.
+    let mut sections = arrayvec::ArrayVec::<_, MAX_RAM_BANKS>::new();
+    for bank in allocator.banks() {
+        let bank_region = bank.region();
+        let offset = bank_region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
+        let end = bank_region.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
+        let len = end - offset;
+        let page_meta_items = allocate_page_metadata(allocator, offset, len);
+        sections.push((page_meta_items, offset));
+    }
 
     let mut page_meta_map = PageMetaMap::empty();
-    for memory in allocator.memories_mut() {
-        let memory_region = memory.region();
-        let offset = memory_region.start.align_down(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
-        let end = memory_region.end.align_up(PAGE_SIZE).as_raw() / PAGE_SIZE.get();
-        let len = end - offset;
-        let page_meta_items = unsafe {
-            let mut items = Box::<[PageMeta], _>::new_uninit_slice_in(len, &*memory);
-            for (i, page_meta) in items.iter_mut().enumerate() {
-                page_meta.write(PageMeta::uninit(Pa::new((offset + i) * PAGE_SIZE.get())));
-            }
-            let items = items.assume_init();
-            let (page_meta_items, _) = Box::into_raw_with_allocator(items); // never deallocate
-            &mut *page_meta_items
-        };
-
-        // reserve outside RAM region
-        for page_meta in &mut *page_meta_items {
-            let page_region = page_meta.region();
-            if page_region.start < memory_region.start || memory_region.end < page_region.end {
-                page_meta.owned_uninit().consume_as_reserved();
-            }
-        }
-
-        for reserved in memory.reserved() {
-            // TODO: improve by selecting range
-            for page_meta in &mut *page_meta_items {
-                if !page_meta.is_uninit() {
-                    continue;
-                }
-                let page_region = page_meta.region();
-                if reserved.overlap(page_region) {
-                    page_meta.owned_uninit().consume_as_reserved();
-                }
+    for (bank, (page_meta_items, offset)) in allocator.banks().iter().zip(sections) {
+        let bank_region = bank.region();
+        let reserved = bank.reserved();
+        for page in &mut *page_meta_items {
+            let span = page.region();
+            if span.start < bank_region.start
+                || bank_region.end < span.end
+                || reserved.iter().any(|r| r.overlap(span))
+            {
+                page.owned_uninit().consume_as_reserved();
             }
         }
 
         BUDDY.lock().initialize_section(&mut *page_meta_items);
 
-        page_meta_map.add(PageMetaSection::new(page_meta_items, offset, memory_region));
+        page_meta_map.add(PageMetaSection::new(page_meta_items, offset, bank_region));
     }
 
     // Page-table allocation and destruction may now resolve raw physical
     // addresses back to their metadata.
-    PAGE_META_MAP.get_or_init(|| page_meta_map);
+    page_meta_map
+}
+
+#[unsafe(link_section = ".init.text")]
+fn allocate_page_metadata(
+    allocator: &BumpAllocator,
+    offset: usize,
+    len: usize,
+) -> &'static mut [PageMeta] {
+    extern crate alloc;
+    use alloc::boxed::Box;
+
+    let mut items = Box::<[PageMeta], _>::new_uninit_slice_in(len, allocator);
+    for (i, page) in items.iter_mut().enumerate() {
+        page.write(PageMeta::uninit(Pa::new((offset + i) * PAGE_SIZE.get())));
+    }
+    // Initialized above. Boot never frees the storage backing the metadata map.
+    unsafe {
+        let (items, _) = Box::into_raw_with_allocator(items.assume_init());
+        &mut *items
+    }
 }

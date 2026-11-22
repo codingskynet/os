@@ -9,3 +9,7 @@ pub mod dt;
 pub mod interrupt;
 pub mod timer;
 pub mod uart;
+
+pub mod discovery;
+pub mod routes;
+pub use routes::Routes;

@@ -11,27 +11,102 @@ use core::ptr::NonNull;
 use core::slice::Iter;
 
 use arrayvec::ArrayVec;
-use runtime::arch::{self};
+use runtime::arch::consts::PAGE_SIZE;
 use runtime::dev::dt::Fdt;
-use runtime::dev::dt::memory::MemoryIter;
+use runtime::dev::dt::memory::{MemoryIter, reservations};
 use runtime::kernel::sync::SpinLock;
 use runtime::mm::addr::Pa;
 use runtime::mm::region::Region;
-use runtime::{debug, printlnk};
+use runtime::{arch, debug};
 
 #[unsafe(link_section = ".init.bss")]
-pub static BUMP_ALLOCATOR: SpinLock<BumpAllocator> = SpinLock::new(BumpAllocator::empty());
+pub static BUMP_ALLOCATOR: SpinLock<BumpAllocator> = SpinLock::new(BumpAllocator::EMPTY);
+
+/// Round the start up and the exclusive end down to page boundaries.
+/// Equal rounded bounds yield an empty region. Returns `None` if the
+/// rounded start exceeds the rounded end or overflows the address space.
+#[unsafe(link_section = ".init.text")]
+fn whole_pages(region: Region) -> Option<Region> {
+    let start = region
+        .start
+        .as_raw()
+        .checked_next_multiple_of(PAGE_SIZE.get())?;
+    Region::new(Pa::new(start), region.end.align_down(PAGE_SIZE))
+}
+
+/// Firmware RAM ranges and reservations, available before allocator initialization.
+pub(crate) struct MemoryMap<'a> {
+    fdt: &'a Fdt,
+}
+
+impl<'a> MemoryMap<'a> {
+    #[unsafe(link_section = ".init.text")]
+    pub(crate) fn new(fdt: &'a Fdt) -> Self {
+        Self { fdt }
+    }
+
+    #[unsafe(link_section = ".init.text")]
+    fn ram_regions(&self) -> impl Iterator<Item = Region> {
+        MemoryIter::new(self.fdt).map(|reg| {
+            let (addr, size) = reg.expect("unsupported RAM range");
+            Region::from_size(Pa::new(addr), size)
+        })
+    }
+
+    /// Yield representable reservations, rounding no-map ranges out to page boundaries.
+    #[unsafe(link_section = ".init.text")]
+    fn reservations(&self) -> impl Iterator<Item = (Region, bool)> {
+        reservations(self.fdt).filter_map(|reservation| {
+            let start = Pa::try_from(reservation.base).ok()?;
+            let end = reservation
+                .base
+                .checked_add(reservation.size)
+                .expect("FDT range overflow");
+            let end = usize::try_from(end).unwrap_or(usize::MAX);
+            let region = if reservation.no_map {
+                Region::new(
+                    start.align_down(PAGE_SIZE),
+                    Pa::new(
+                        end.checked_next_multiple_of(PAGE_SIZE.get())
+                            .unwrap_or(usize::MAX),
+                    ),
+                )
+            } else {
+                Region::new(start, Pa::new(end))
+            }?;
+            Some((region, reservation.no_map))
+        })
+    }
+
+    /// Visit complete RAM pages that can be included in ordinary RAM mappings.
+    #[unsafe(link_section = ".init.text")]
+    pub(crate) fn for_each_mappable_ram(&self, mut visit: impl FnMut(Region)) {
+        let mut excluded = RegionSet::new();
+        for (region, no_map) in self.reservations() {
+            if no_map {
+                excluded.insert(region);
+            }
+        }
+        for pages in self.ram_regions().filter_map(whole_pages) {
+            for gap in excluded.gaps(pages) {
+                visit(gap);
+            }
+        }
+    }
+}
+
+pub const MAX_RAM_BANKS: usize = 4;
 
 /// Allocator over all discovered physical memory ranges.
 pub struct BumpAllocator {
-    memories: RefCell<ArrayVec<Memory, 4>>,
+    banks: ArrayVec<RamBank, MAX_RAM_BANKS>,
 }
 
 unsafe impl Allocator for BumpAllocator {
     #[unsafe(link_section = ".init.text")]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        for memory in self.memories.borrow().iter() {
-            if let Ok(allocation) = memory.allocate(layout) {
+        for bank in &self.banks {
+            if let Ok(allocation) = bank.allocate(layout) {
                 return Ok(allocation);
             }
         }
@@ -47,58 +122,53 @@ unsafe impl Allocator for BumpAllocator {
 }
 
 impl BumpAllocator {
-    #[unsafe(link_section = ".init.text")]
-    pub const fn empty() -> Self {
-        Self {
-            memories: RefCell::new(ArrayVec::new_const()),
-        }
-    }
+    const EMPTY: Self = Self {
+        banks: ArrayVec::new_const(),
+    };
 
     #[unsafe(link_section = ".init.text")]
     pub fn init(&mut self, fdt: &Fdt) {
-        let memories = self.memories.get_mut();
-        memories.clear();
-        for reg in MemoryIter::new(fdt) {
-            let (addr, size) = reg.expect("memory reg is incompatible with this target");
-            let region = Region::from_size(Pa::new(addr), size);
+        let map = MemoryMap::new(fdt);
+        self.banks.clear();
+        for region in map.ram_regions() {
             debug!("bump: register memory {region:?}");
-            memories.push(Memory::new(region));
+            self.banks.push(RamBank::new(region));
         }
-
-        // TODO: add reserve-memory from FDT
-        let kernel = arch::region::kernel();
-        self.reserve(kernel);
-        let dtb = Region::from_raw(fdt.as_ptr(), fdt.as_ptr().wrapping_add(fdt.total_size()));
-        // A board may embed its DTB in the already-reserved kernel image.
-        if !(kernel.start <= dtb.start && dtb.end <= kernel.end) {
-            self.reserve(dtb);
+        for (region, _) in map.reservations() {
+            self.reserve(region);
         }
+        self.reserve(arch::region::kernel());
+        self.reserve(Region::from_raw(
+            fdt.as_ptr(),
+            fdt.as_ptr().wrapping_add(fdt.total_size()),
+        ));
     }
 
     #[unsafe(link_section = ".init.text")]
     fn reserve(&mut self, region: Region) {
-        for mem in self.memories.get_mut().iter_mut() {
-            if mem.reserve(region).is_ok() {
-                return;
+        for bank in &mut self.banks {
+            if let Some(part) = Region::new(
+                bank.region.start.max(region.start),
+                bank.region.end.min(region.end),
+            ) {
+                bank.reserved.get_mut().insert(part);
             }
         }
-
-        printlnk!("bump: failed to reserve region: {region:?}");
     }
 
     #[unsafe(link_section = ".init.text")]
-    pub fn memories_mut(&mut self) -> &mut [Memory] {
-        self.memories.get_mut()
+    pub fn banks(&self) -> &[RamBank] {
+        &self.banks
     }
 }
 
 /// One physical memory range plus sub-ranges already reserved from it.
-pub struct Memory {
+pub struct RamBank {
     region: Region,
-    reserved: RefCell<RegionSet<8>>,
+    reserved: RefCell<RegionSet>,
 }
 
-unsafe impl Allocator for Memory {
+unsafe impl Allocator for RamBank {
     #[unsafe(link_section = ".init.text")]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let align = NonZeroUsize::new(layout.align()).unwrap();
@@ -118,7 +188,7 @@ unsafe impl Allocator for Memory {
     }
 }
 
-impl Memory {
+impl RamBank {
     #[unsafe(link_section = ".init.text")]
     pub fn new(region: Region) -> Self {
         Self {
@@ -133,145 +203,73 @@ impl Memory {
     }
 
     #[unsafe(link_section = ".init.text")]
-    pub fn reserved(&mut self) -> &[Region] {
-        self.reserved.get_mut().as_slice()
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    pub fn reserve(&mut self, region: Region) -> Result<(), Region> {
-        if self.region.start <= region.start && region.end <= self.region.end {
-            self.reserved.get_mut().alloc(region)
-        } else {
-            Err(region)
-        }
+    pub fn reserved(&self) -> core::cell::Ref<'_, [Region]> {
+        core::cell::Ref::map(self.reserved.borrow(), |set| set.regions.as_slice())
     }
 
     #[unsafe(link_section = ".init.text")]
     pub fn alloc(&self, size: NonZeroUsize, align: NonZeroUsize) -> Option<Region> {
         let allocation = {
             let reserved = self.reserved.borrow();
-            self.free_iter(&reserved).find_map(|free| {
+            reserved.gaps(whole_pages(self.region)?).find_map(|free| {
                 let region = Region::from_size(free.start.align_up(align), size);
-                (region.end <= free.end && reserved.is_allocable(region)).then_some(region)
+                (region.end <= free.end).then_some(region)
             })
         };
-        if let Some(allocation) = allocation
-            && self.reserved.borrow_mut().alloc(allocation).is_ok()
-        {
-            Some(allocation)
-        } else {
-            None
+        if let Some(region) = allocation {
+            self.reserved.borrow_mut().insert(region);
         }
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    fn free_iter<'a>(&self, reserved: &'a RegionSet<8>) -> FreeRegionIterator<'a> {
-        FreeRegionIterator {
-            region: self.region,
-            cursor: self.region.start,
-            reserved: reserved.iter(),
-            is_end: false,
-        }
+        allocation
     }
 }
 
-/// Sorted, coalescing set of reserved regions.
-pub struct RegionSet<const N: usize> {
-    regions: ArrayVec<Region, N>,
+/// Sorted union of fixed boot reservations and bump allocations.
+struct RegionSet {
+    regions: ArrayVec<Region, 32>,
 }
 
-#[unsafe(link_section = ".init.text")]
-fn overlap(region: Region, other: Option<Region>) -> bool {
-    other.is_some_and(|other| region.overlap(other))
-}
-
-impl<const N: usize> RegionSet<N> {
+impl RegionSet {
     #[unsafe(link_section = ".init.text")]
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             regions: ArrayVec::new_const(),
         }
     }
 
     #[unsafe(link_section = ".init.text")]
-    pub fn as_slice(&self) -> &[Region] {
-        &self.regions
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    pub fn is_allocable(&self, region: Region) -> bool {
+    fn insert(&mut self, mut region: Region) {
         if region.is_empty() {
-            return true;
+            return;
         }
-
-        let (_, left, right) = self.neighbors(region);
-        !overlap(region, left) && !overlap(region, right)
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    pub fn alloc(&mut self, region: Region) -> Result<(), Region> {
-        if region.is_empty() {
-            return Ok(());
-        }
-
-        let (index, left, right) = self.neighbors(region);
-        if overlap(region, left) || overlap(region, right) {
-            return Err(region);
-        }
-        if let Some(left) = left
-            && let Some(right) = right
-            && left.end == region.start
-            && region.end == right.start
-        {
-            self.regions[index - 1] = Region::new(left.start, right.end).unwrap();
+        let index = self.regions.partition_point(|r| r.end < region.start);
+        while let Some(other) = self.regions.get(index) {
+            if other.start > region.end {
+                break;
+            }
+            region.start = region.start.min(other.start);
+            region.end = region.end.max(other.end);
             self.regions.remove(index);
-            return Ok(());
         }
-        if let Some(left) = left
-            && left.end == region.start
-        {
-            self.regions[index - 1] = Region::new(left.start, region.end).unwrap();
-            return Ok(());
-        }
-        if let Some(right) = right
-            && region.end == right.start
-        {
-            self.regions[index] = Region::new(region.start, right.end).unwrap();
-            return Ok(());
-        }
-
         self.regions
             .try_insert(index, region)
-            .map_err(|e| e.element())
+            .expect("too many disjoint boot reservations");
     }
 
     #[unsafe(link_section = ".init.text")]
-    pub fn iter(&self) -> Iter<'_, Region> {
-        self.regions.iter()
-    }
-
-    #[unsafe(link_section = ".init.text")]
-    fn neighbors(&self, region: Region) -> (usize, Option<Region>, Option<Region>) {
-        let index = self
-            .regions
-            .iter()
-            .position(|now| region.start < now.start)
-            .unwrap_or(self.regions.len());
-        let left = index
-            .checked_sub(1)
-            .and_then(|i| self.regions.get(i))
-            .copied();
-        let right = self.regions.get(index).copied();
-        (index, left, right)
+    fn gaps(&self, region: Region) -> FreeRegionIterator<'_> {
+        FreeRegionIterator {
+            region,
+            cursor: region.start,
+            reserved: self.regions.iter(),
+        }
     }
 }
 
-/// Iterator over the free gaps in one [`Memory`] range.
+/// Iterator over the free gaps in one [`RamBank`] range.
 pub struct FreeRegionIterator<'a> {
     region: Region,
     cursor: Pa,
     reserved: Iter<'a, Region>,
-    is_end: bool,
 }
 
 impl<'a> Iterator for FreeRegionIterator<'a> {
@@ -279,26 +277,19 @@ impl<'a> Iterator for FreeRegionIterator<'a> {
 
     #[unsafe(link_section = ".init.text")]
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.is_end {
-                return None;
-            }
-            match self.reserved.next() {
-                Some(reserved) => {
-                    let region = Region::new(self.cursor, reserved.start);
-                    self.cursor = reserved.end;
-                    if let Some(region) = region {
-                        return Some(region);
-                    }
-                }
-                None => {
-                    self.is_end = true;
-                    let region = Region::new(self.cursor, self.region.end);
-                    if let Some(region) = region {
-                        return Some(region);
-                    }
-                }
+        while self.cursor < self.region.end {
+            let start = self.cursor;
+            let end = if let Some(reserved) = self.reserved.next() {
+                self.cursor = self.cursor.max(reserved.end);
+                reserved.start.min(self.region.end)
+            } else {
+                self.cursor = self.region.end;
+                self.region.end
+            };
+            if start < end {
+                return Region::new(start, end);
             }
         }
+        None
     }
 }

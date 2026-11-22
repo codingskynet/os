@@ -1,0 +1,26 @@
+[package]
+name = "board-devterm-r01"
+version.workspace = true
+edition.workspace = true
+build = "../build.rs"
+
+[[bin]]
+name = "board-devterm-r01"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+boot = { path = "../../boot" }
+runtime.workspace = true
+thiserror.workspace = true
+usb-device = "0.3.2"
+usbd-serial = "0.2.2"
+
+[lints]
+workspace = true
+
+[build-dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true

@@ -3,3 +3,6 @@ set -eu
 
 toolchain=$(sed -n '1p' .rustfmt-toolchain)
 cargo +"$toolchain" fmt "$@"
+
+# rustfmt does not expand the generated module declarations.
+find driver/src -type f -name '*.rs' -exec rustup run "$toolchain" rustfmt --edition 2024 "$@" {} +

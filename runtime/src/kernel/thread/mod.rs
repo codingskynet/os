@@ -50,6 +50,7 @@ pub enum ThreadState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThreadKind {
     Idle,
+    Init,
     Normal,
 }
 
@@ -85,6 +86,9 @@ impl Thread {
         Self::new_with_kind(
             || {
                 crate::kernel::init::idle_online();
+                // A pending tick may switch threads as soon as SIE is set.
+                // Finish the boot-stack handoff before scheduling is possible.
+                arch::asm::interrupt::enable();
                 loop {
                     if !Scheduler::run_next() {
                         arch::asm::interrupt::wait();
@@ -111,7 +115,7 @@ impl Thread {
         self.waker.clone()
     }
 
-    fn new_with_kind(entry: impl FnOnce() + Send + 'static, kind: ThreadKind) -> Box<Thread> {
+    pub fn new_with_kind(entry: impl FnOnce() + Send + 'static, kind: ThreadKind) -> Box<Thread> {
         // Install the shared kernel-stack mappings before cloning the active
         // kernel page-table subtree into this thread's memory context.
         let stack = KernelStack::new();
@@ -131,7 +135,7 @@ impl Thread {
 
         thread
             .switch
-            .as_kernel_thread_trampoline(thread.stack.top());
+            .as_kernel_thread_trampoline(thread.stack.top(), kind != ThreadKind::Idle);
         thread
     }
 
@@ -145,7 +149,7 @@ impl Thread {
 
     fn begin_parking(&mut self) {
         assert_eq!(self.state, ThreadState::Running);
-        assert_eq!(self.kind, ThreadKind::Normal, "idle thread cannot park");
+        assert_ne!(self.kind, ThreadKind::Idle, "idle thread cannot park");
         self.state = ThreadState::Parking;
     }
 

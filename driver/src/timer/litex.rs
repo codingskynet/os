@@ -2,6 +2,7 @@
 use core::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use core::ptr::{read_volatile, write_volatile};
 
+use runtime::dev::discovery;
 use runtime::dev::dt::mmio::Mmio;
 use runtime::dev::dt::{Fdt, FdtWalker};
 use runtime::dev::timer::TimerDevice;
@@ -28,11 +29,9 @@ pub struct Config {
 }
 impl Config {
     pub fn probe(fdt: &Fdt) -> Result<Option<Self>, &'static str> {
-        crate::discovery::unique(fdt, |node| {
-            crate::discovery::compatible(node, "litex,timer")
-        })?
-        .map(Self::from_node)
-        .transpose()
+        discovery::unique(fdt, |node| discovery::compatible(node, "litex,timer"))?
+            .map(Self::from_node)
+            .transpose()
     }
     #[inline(never)]
     fn from_node(node: FdtWalker<'_>) -> Result<Self, &'static str> {
@@ -113,3 +112,14 @@ impl TimerDevice for Timer {
         true
     }
 }
+
+pub const DRIVER: boot::drivers::TimerDriver = boot::drivers::TimerDriver {
+    probe: |fdt| Ok(Config::probe(fdt)?.is_some()),
+    install: |fdt, mmio| {
+        let config = Config::probe(fdt)?.ok_or("timer disappeared after discovery")?;
+        Ok(boot::drivers::InstalledTimer {
+            device: unsafe { config.install(mmio)? },
+            irq: Some(config.irq),
+        })
+    },
+};

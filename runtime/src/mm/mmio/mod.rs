@@ -1,8 +1,8 @@
 //! Permanent MMIO mappings created during device installation on the boot hart.
 //!
 //! The MMIO window is separate from the RAM direct map. Mappings are supervisor
-//! read/write, non-executable, and retain the platform's physical memory
-//! attributes (PMA). Callers must supply device memory, not ordinary RAM.
+//! read/write and non-executable. Device registers use IO mappings. Reserved
+//! buffers can request a different memory type in the same window.
 //! Hotplug, unmapping and remote TLB shootdowns are not implemented.
 mod layout;
 use core::marker::PhantomData;
@@ -12,6 +12,7 @@ pub use layout::Error;
 use layout::Layout;
 
 use crate::arch::consts::*;
+use crate::arch::paging::MemoryType;
 use crate::arch::{asm, paging};
 use crate::mm::addr::{Pa, Va};
 
@@ -42,6 +43,22 @@ impl Mapper {
     /// The caller owns device initialization and must not create conflicting
     /// RAM/cacheable aliases. The boot-time requirements of new() still apply.
     pub unsafe fn map(&mut self, physical: usize, size: NonZeroUsize) -> Result<Va, Error> {
+        unsafe { self.map_with_type(physical, size, MemoryType::IO) }
+    }
+
+    /// Map a device resource or reserved buffer with the requested access type.
+    ///
+    /// # Safety
+    /// The caller must own the resource and ensure the type is suitable for
+    /// every mapped page, including any aliases. If PTE memory types are
+    /// unavailable, the physical memory attributes must supply the requested
+    /// behavior. The boot-time requirements of [`Self::new`] apply.
+    pub unsafe fn map_with_type(
+        &mut self,
+        physical: usize,
+        size: NonZeroUsize,
+        memory_type: MemoryType,
+    ) -> Result<Va, Error> {
         let last = MMIO_VMA_END - 1;
         let layout = Layout::new(physical, size, self.next, last, PAGE_SIZE.get())?;
         for page in 0..layout.pages {
@@ -53,6 +70,7 @@ impl Mapper {
                     va,
                     pa,
                     paging::Permission::R | paging::Permission::W,
+                    memory_type,
                 )
             } {
                 // Undo only leaves installed by this call; retain any existing mapping.

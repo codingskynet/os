@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::kernel::per_core::PerCore;
 use crate::kernel::scheduler::Scheduler;
-use crate::kernel::thread;
+use crate::kernel::thread::{self, Thread, ThreadKind};
 use crate::{arch, fs, printlnk};
 
 /// Number of secondary harts that have started their preinstalled idle context.
@@ -20,12 +20,15 @@ pub fn kernel_init(initarfs: &'static [u8], init_path: &'static str) -> ! {
     init_this_hart();
     start_secondary_harts();
 
-    thread::spawn(move || {
-        #[cfg(debug_assertions)]
-        crate::debug::smoke();
+    Scheduler::push_ready(Thread::new_with_kind(
+        move || {
+            #[cfg(debug_assertions)]
+            crate::debug::smoke();
 
-        fs::kernel_exec(init_path).expect("failed to run init");
-    });
+            fs::kernel_exec(init_path).expect("failed to run init");
+        },
+        ThreadKind::Init,
+    ));
 
     thread::jump_to_scheduler();
 }

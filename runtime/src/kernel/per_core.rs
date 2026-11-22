@@ -103,8 +103,13 @@ impl PerCore {
         f(per_core)
     }
 
+    /// Dense index of the hart executing this call.
+    pub fn current_index() -> usize {
+        Self::with_mut(|core| core.index)
+    }
+
     pub fn is_boot_core() -> bool {
-        PerCore::with_mut(|c| c.index == 0)
+        Self::current_index() == 0
     }
 
     pub fn core_id() -> usize {

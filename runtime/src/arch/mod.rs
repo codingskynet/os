@@ -1,20 +1,12 @@
 //! Architecture abstraction layer.
 //!
-//! Each supported ISA lives under its own sub-directory (`rv64/`, `aarch64/`, …)
-//! and implements the traits defined here so the rest of the kernel can be
-//! architecture-agnostic.
+//! The selected architecture supplies the low-level interfaces used by the runtime.
 
 pub mod interrupt;
 pub mod memory;
-pub mod paging;
 pub mod region;
 
-#[cfg(target_arch = "riscv64")]
-pub mod rv64;
-#[cfg(target_arch = "riscv64")]
-pub use rv64::*;
-
-#[cfg(target_arch = "riscv32")]
-pub mod rv32;
-#[cfg(target_arch = "riscv32")]
-pub use rv32::*;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+pub mod rv;
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+pub use rv::*;

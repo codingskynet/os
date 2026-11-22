@@ -26,4 +26,3 @@ bench = false
 [dependencies]
 arrayvec.workspace = true
 runtime.workspace = true
-driver.workspace = true

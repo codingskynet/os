@@ -2,7 +2,9 @@
 
 use crate::arch;
 use crate::arch::consts::*;
-use crate::arch::paging::{Permission, map_kernel_page_to_active, unmap_page_from_active};
+use crate::arch::paging::{
+    MemoryType, Permission, map_kernel_page_to_active, unmap_page_from_active,
+};
 use crate::kernel::sync::SpinLock;
 use crate::mm::Pages;
 use crate::mm::addr::Va;
@@ -130,7 +132,14 @@ impl StackSlots {
             assert!(
                 // SAFETY: STACK_SLOTS serializes every kernel-stack mapping
                 // mutation, and this allocator exclusively owns the slot.
-                unsafe { map_kernel_page_to_active(va, pa, Permission::R | Permission::W) },
+                unsafe {
+                    map_kernel_page_to_active(
+                        va,
+                        pa,
+                        Permission::R | Permission::W,
+                        MemoryType::Normal,
+                    )
+                },
                 "kernel stack VA is already mapped: {va}"
             );
             offset += PAGE_SIZE.get();

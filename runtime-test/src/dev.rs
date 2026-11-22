@@ -1,3 +1,5 @@
+pub use crate::discovery;
+
 #[path = "../../runtime/src/dev/console.rs"]
 pub mod console;
 
