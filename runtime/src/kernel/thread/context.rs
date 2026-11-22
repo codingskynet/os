@@ -8,6 +8,7 @@ use core::task::{Context, Poll, Waker};
 use crate::arch;
 use crate::arch::interrupt::InterruptGuard;
 use crate::kernel::per_core::PerCore;
+use crate::kernel::power::POWER;
 use crate::kernel::scheduler::Scheduler;
 use crate::kernel::thread::waker::ThreadWaker;
 use crate::kernel::thread::{Thread, ThreadKind, ThreadState};
@@ -80,15 +81,12 @@ impl CurrentThread {
         Self::with_mut(|thread| thread.waker())
     }
 
-    pub fn replace_mm(mm: MmContext) {
-        Self::with_mut(|current| {
-            let old = mem::replace(&mut current.mm, mm);
-            // SAFETY: the new context contains the shared kernel mappings and
-            // remains owned by the current thread after activation.
-            unsafe { current.mm.activate() };
-            // Do not release the old root until satp points at the new one.
-            drop(old);
-        })
+    pub fn replace_mm(mut mm: MmContext) {
+        let _guard = InterruptGuard::new();
+        // SAFETY: both contexts map the kernel. Keep the current root alive
+        // until the new one is active and installed on this thread.
+        unsafe { mm.activate() };
+        Self::with_mut(|current| current.mm = mm);
     }
 
     /// Leave S-mode using the current thread's full guarded stack as the trap
@@ -126,7 +124,6 @@ impl CurrentThread {
     pub fn switch_to(mut next: Box<Thread>) {
         assert!(!arch::asm::interrupt::is_enabled());
         next.state = ThreadState::Running;
-
         unsafe { next.mm.activate() };
 
         let (next_ptr, prev_ptr) = {
@@ -197,16 +194,17 @@ pub fn jump_to_scheduler() -> ! {
             "idle thread already started"
         );
         idle.state = ThreadState::Running;
-        unsafe { idle.mm.activate() };
         idle as *mut Thread
     });
 
     // SAFETY: this hart's PerCore.current has owned its private `idle` since
     // primary-hart initialization. Every kernel mapping needed to finish the
     // direct switch is shared with the currently active address space. Boot
-    // keeps interrupts disabled until `_switch_to` restores the idle thread's
-    // saved SIE state.
-    unsafe { arch::switch::_switch_to(&(*idle).switch) }
+    // and the fresh idle context both keep interrupts masked through idle_online.
+    unsafe {
+        (*idle).mm.activate();
+        arch::switch::_switch_to(&(*idle).switch)
+    }
 }
 
 pub extern "C" fn _kernel_thread_start() -> ! {
@@ -266,6 +264,9 @@ pub fn exit(code: isize) -> ! {
     // sstatus controls its interrupt state, and the exiting allocation is
     // destroyed by `_after_switch` only after execution leaves this stack.
     arch::asm::interrupt::disable();
+    if CurrentThread::with_mut(|current| current.kind == ThreadKind::Init) {
+        POWER.halt_init(code);
+    }
     CurrentThread::with_mut(|current| current.set_exit(code));
     Scheduler::run_next();
     unreachable!("exited thread resumed after scheduler switch")

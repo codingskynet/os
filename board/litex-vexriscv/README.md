@@ -1,24 +1,29 @@
-# LiteX / VexRiscv build target
+# LiteX / VexRiscv
 
-This executable depends on the shared `boot` library and enables the `driver` features `litex` and `vexriscv-intc`.
-`litex` bundles the `liteuart` and `litex-timer` peripherals; the VexRiscv
-interrupt controller is selected separately. Implementations live under
-`driver/src/{console,interrupt,timer}`, and firmware FDT selects
-each device independently. Supported LiteX machines use a single-hart RV32IMA
-SoC with 32-bit LiteX CSRs and a timer with a 64-bit uptime counter.
+This single-hart RV32IMA board uses Sv32 paging and a LiteUART console. The
+LiteX BIOS loads the kernel at `0x40000000` and passes the hart ID in `a0`
+and the physical device-tree address in `a1`.
 
-The dependency direction is `board -> boot -> driver -> runtime`;
-`boot` also uses the common driver discovery API directly. Runtime contains
-interfaces and kernel policy, with no dependency on board or driver crates.
+## Build
 
-The FPGA repository owns RV32 image composition and upload; see the
-[top-level contract](../../README.md#litex--vexriscv-rv32ima--sv32).
-The kernel executable remains `board-litex-vexriscv`. Shared `board/build.rs`
-supplies architecture-specific linker scripts and memory-layout symbols.
-The common entry embeds `artifacts/initarfs` and starts `/bin/micropython`.
+From the repository root, prepare the MicroPython port and build an RV32
+root filesystem. This needs a `riscv-none-elf-` GCC toolchain with RV32IMA/ILP32
+support. Set `CROSS_COMPILE` if your toolchain uses a different prefix.
 
-Driver features are additive. FDT selects an available implementation from
-the drivers included by the board.
-Addresses, timer frequency, and interrupt routing come from firmware.
-See [driver discovery](../../driver/README.md) for the initialization sequence
-and current supported device topologies.
+```sh
+make ports-prepare PORTS=micropython
+make -C userland initarfs ARCH=riscv32imac-unknown-none-elf \
+  SUBDIRS=ports/micropython/ports/os BUILD=build-rv32
+```
+
+Build the kernel and its Rust libraries without compressed instructions.
+
+```sh
+RUSTFLAGS='-C target-feature=-c,-zca -C relocation-model=static -C code-model=medium' \
+  cargo build -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+  --release --target riscv32imac-unknown-none-elf -p board-litex-vexriscv
+```
+
+The ELF is `target/riscv32imac-unknown-none-elf/release/board-litex-vexriscv`.
+RV32 and RV64 builds share `artifacts/initarfs`. Build one architecture at a
+time and regenerate the archive when switching.

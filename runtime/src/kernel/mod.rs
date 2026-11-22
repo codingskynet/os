@@ -9,6 +9,7 @@ pub mod file;
 pub mod init;
 pub mod interrupt;
 pub mod per_core;
+pub mod power;
 pub mod scheduler;
 pub mod sync;
 pub mod syscall;

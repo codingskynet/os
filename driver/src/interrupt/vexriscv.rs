@@ -1,13 +1,11 @@
 //! VexRiscv supervisor CSR interrupt array.
+use runtime::dev::Routes;
 use runtime::dev::interrupt::InterruptController;
-
-use crate::Error;
-use crate::interrupt::Routes;
 pub(super) struct State {
     routes: Routes,
 }
 
-pub fn create(routes: Routes) -> Result<State, Error> {
+fn create(routes: Routes) -> Result<State, &'static str> {
     if routes.irqs().any(|irq| irq >= 32) {
         return Err("VexRiscv IRQ out of range");
     }
@@ -41,3 +39,12 @@ impl InterruptController for State {
         schedule
     }
 }
+
+extern crate alloc;
+
+pub const DRIVER: boot::drivers::InterruptDriver = boot::drivers::InterruptDriver {
+    compatibles: &["vexriscv,intc0"],
+    singleton: true,
+    decode_irq: runtime::dev::discovery::single_cell_irq,
+    create: |_fdt, _node, routes, _mmio| Ok(alloc::boxed::Box::new(create(routes)?)),
+};

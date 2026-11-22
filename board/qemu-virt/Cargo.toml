@@ -12,7 +12,13 @@ bench = false
 
 [dependencies]
 boot = { path = "../../boot" }
-driver = { workspace = true, features = ["all"] }
+driver = { path = "../../driver" }
+runtime.workspace = true
 
 [lints]
 workspace = true
+
+[build-dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true

@@ -105,7 +105,7 @@ fn load_elf(image: &[u8]) -> Result<(MmContext, Va)> {
         Permission::R | Permission::W,
     )?;
 
-    let mut mm = MmContext::new();
+    let mut mm = MmContext::new_for_exec();
     for (addr, (pages, permissions)) in allocations {
         mm.map_user_page(addr.into_va(), pages, permissions)
             .map_err(|_| Error::InvalidExecutable)?;

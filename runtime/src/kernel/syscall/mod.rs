@@ -10,6 +10,7 @@ use crate::arch::regs::GeneralRegs;
 use crate::args_enum;
 use crate::kernel::file::FileDescriptor;
 use crate::kernel::per_core::PerCore;
+use crate::kernel::power::POWER;
 use crate::kernel::thread;
 
 args_enum! {
@@ -22,6 +23,7 @@ args_enum! {
         4 => Close(FileDescriptor = a1.into()),
         5 => HartId,
         6 => Sleep(usize = a1),
+        7 => Reboot,
     }
 }
 
@@ -82,6 +84,10 @@ pub fn handle(syscall: Syscall) -> (usize, usize) {
         Syscall::Read((fd, addr, len)) => read::read(fd, addr, len).into(),
         Syscall::Open((addr, len)) => open::open(addr, len).into(),
         Syscall::Close(fd) => close::close(fd).into(),
+        Syscall::Reboot => {
+            // TODO: managed by permissions
+            SyscallResult::err(POWER.reboot())
+        }
         Syscall::HartId => SyscallResult::ok(PerCore::with_mut(|per_core| per_core.hart_id)),
         Syscall::Sleep(milliseconds) => sleep::sleep(milliseconds).into(),
         Syscall::Unknown(number) => panic!("unhandled ecall from U-mode: number={number}"),

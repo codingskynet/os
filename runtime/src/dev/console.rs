@@ -13,11 +13,14 @@ pub trait Console: Read<Error = Infallible> + Write<Error = Infallible> + Send {
     /// Enable notification when received data becomes available.
     fn enable_rx_interrupt(&mut self);
 
+    /// Give buffered output a bounded opportunity to reach the host before halt/reset.
+    fn flush_output(&mut self) {}
+
     /// Consume all currently available input in arrival order.
     ///
     /// Interrupt handlers use this to clear a level-triggered receive source
     /// even when the kernel's software input buffer is full.
-    fn drain_rx(&mut self, receive: &mut dyn FnMut(u8));
+    fn drain_rx(&mut self, space: usize, receive: &mut dyn FnMut(u8));
 }
 
 /// Console MMIO and interrupt wiring selected by `/chosen/stdout-path`.
@@ -26,8 +29,7 @@ pub struct ConsoleConfig<'a> {
     compatible: &'a [u8],
     base: usize,
     size: NonZeroUsize,
-    interrupt_parent: Option<u32>,
-    interrupt: Option<u32>,
+    interrupt: Option<(u32, &'a [u8])>,
 }
 
 impl<'a> ConsoleConfig<'a> {
@@ -90,7 +92,7 @@ impl<'a> ConsoleConfig<'a> {
                         .transpose()?;
                 }
                 "interrupt-parent" => interrupt_parent = value.into_scalar_u32(),
-                "interrupts" => interrupt = value.into_scalar_u32(),
+                "interrupts" => interrupt = Some(value.into_slice()),
                 _ => {}
             }
         }
@@ -98,14 +100,24 @@ impl<'a> ConsoleConfig<'a> {
         let Some((base, size)) = reg else {
             return Err(Error::InvalidMmio);
         };
+        let interrupt_parent = interrupt_parent.or_else(|| Self::bus_interrupt_parent(fdt, path));
         Ok(Self {
             path,
             compatible: compatible.ok_or(Error::InvalidMmio)?,
             base,
             size,
-            interrupt_parent,
-            interrupt,
+            interrupt: interrupt_parent.zip(interrupt),
         })
+    }
+
+    fn bus_interrupt_parent(fdt: &Fdt, mut path: &str) -> Option<u32> {
+        while let Some((parent, _)) = path.rsplit_once('/') {
+            if let Some(value) = fdt.lookup(parent).prop("interrupt-parent") {
+                return value.into_scalar_u32();
+            }
+            path = parent;
+        }
+        None
     }
 
     pub const fn path(&self) -> &str {
@@ -129,11 +141,9 @@ impl<'a> ConsoleConfig<'a> {
         (self.base, self.size)
     }
 
-    /// Return the direct interrupt-controller phandle and interrupt specifier.
-    ///
-    /// `None` indicates that either property is absent or malformed.
-    pub fn interrupt(&self) -> Option<(u32, u32)> {
-        self.interrupt_parent.zip(self.interrupt)
+    /// Interrupt parent and raw `interrupts` property for the controller to decode.
+    pub fn interrupt(&self) -> Option<(u32, &'a [u8])> {
+        self.interrupt
     }
 
     fn parse_compatible(value: &'a [u8]) -> Option<&'a [u8]> {
@@ -173,7 +183,10 @@ mod tests {
         assert_eq!(config.compatible(), "ns16550a");
         let (base, size) = config.reg();
         assert_eq!((base, size.get()), (0x1000_0000, 0x100));
-        assert_eq!(config.interrupt(), Some((3, 10)));
+        assert_eq!(
+            config.interrupt(),
+            Some((3, 10u32.to_be_bytes().as_slice()))
+        );
     }
 
     #[test]
@@ -199,7 +212,6 @@ mod tests {
             compatible,
             base: 0,
             size: NonZeroUsize::new(1).unwrap(),
-            interrupt_parent: None,
             interrupt: None,
         };
 

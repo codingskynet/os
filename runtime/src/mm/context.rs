@@ -4,12 +4,19 @@ use core::result::Result;
 use crate::arch;
 use crate::arch::consts::{LOWER_CANONICAL_END, PAGE_SIZE};
 use crate::arch::paging::{PageTable, Permission};
+use crate::kernel::per_core::PerCore;
 use crate::mm::Pages;
 use crate::mm::addr::{Uva, Va};
+use crate::util::Bitmap;
 
 pub struct MmContext {
     page_table: PageTable,
     mappings: Mappings,
+
+    /// Each hart needs a local `fence.i` before its instruction fetches are
+    /// guaranteed to see the code written by the loader. A set bit at a hart's
+    /// `PerCore` index records that it has run the fence. Empty for kernel threads.
+    icache_synced_harts: Bitmap,
 }
 
 impl Default for MmContext {
@@ -23,6 +30,15 @@ impl MmContext {
         Self {
             page_table: PageTable::new_from_active(),
             mappings: Mappings::default(),
+            icache_synced_harts: Bitmap::new(0),
+        }
+    }
+
+    pub fn new_for_exec() -> Self {
+        Self {
+            page_table: PageTable::new_from_active(),
+            mappings: Mappings::default(),
+            icache_synced_harts: Bitmap::new(PerCore::count()),
         }
     }
 
@@ -35,8 +51,22 @@ impl MmContext {
     /// continued execution on the current code and stack and must provide a
     /// valid trap path. The caller must serialize the transition against
     /// interrupts, concurrent mutation, and destruction of this context.
-    pub unsafe fn activate(&self) {
+    pub unsafe fn activate(&mut self) {
         unsafe { arch::asm::page_table::activate(self.page_table.as_ptr()) };
+
+        // TODO: arch-specific implementation
+        // For AMD64/x86, not require to flush I-cache since it is always consistent to D-cache
+        // For ARM64, depends on case by case
+        if self.icache_synced_harts.is_empty() {
+            return;
+        }
+        let core_index = PerCore::current_index();
+        if !self.icache_synced_harts.is_set(core_index) {
+            // The scheduler's release/acquire handoff publishes the loader's
+            // stores to a new hart. Synchronize local instruction fetch as well.
+            unsafe { core::arch::asm!("fence.i", options(nostack)) };
+            self.icache_synced_harts.set(core_index);
+        }
     }
 
     pub fn map_user_page(

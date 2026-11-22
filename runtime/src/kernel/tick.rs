@@ -2,6 +2,7 @@
 use core::num::NonZeroU32;
 
 use crate::dev::timer;
+use crate::kernel::power::POWER;
 use crate::kernel::scheduler::Scheduler;
 use crate::kernel::timer::Timer;
 
@@ -15,6 +16,8 @@ pub fn init() {
 /// Returns a scheduling request so external IRQ handlers can finish processing
 /// other pending devices before switching tasks.
 pub fn on_tick() -> bool {
+    // TODO: use IPI
+    POWER.stop_if_halted();
     Timer::wake();
     true
 }

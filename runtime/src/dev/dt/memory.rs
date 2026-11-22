@@ -1,7 +1,13 @@
-//! Helpers for extracting RAM ranges from a device tree.
+//! Physical RAM ranges and fixed memory reservations in a device tree.
 //!
-//! Reference: [Devicetree Specification v0.4], section 3.4, "`/memory` Node",
-//! and section 2.3.6, "`reg`".
+//! [`MemoryIter`] yields the full RAM banks described by `/memory` nodes.
+//! [`reservations`] yields entries from the DTB memory reservation block and
+//! fixed `reg` ranges from enabled children of `/reserved-memory`. The two
+//! sources can overlap. A child's `no-map` property marks its range for
+//! exclusion from the kernel's ordinary RAM mappings.
+//!
+//! See [Devicetree Specification v0.4], sections 2.3.6 (`reg`), 3.4
+//! (`/memory`), 3.5 (`/reserved-memory`), and 5.3 (memory reservation block).
 //!
 //! [Devicetree Specification v0.4]:
 //!     https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf
@@ -11,7 +17,7 @@ use core::num::NonZeroUsize;
 use crate::dev::dt::reg::{CompatibleRegIter, IncompatibleRegError};
 use crate::dev::dt::{Fdt, FdtToken, FdtWalker};
 
-/// Iterator over usable memory ranges declared by `/memory*` nodes.
+/// Iterator over physical RAM ranges declared by `/memory*` nodes.
 ///
 /// Every yielded range has an address and nonzero size representable by the
 /// target. Incompatible tuples are returned as errors. Address and size cells
@@ -92,6 +98,65 @@ impl<'a> Iterator for MemoryIter<'a> {
             self.reg_iter = Some(find_memory(&mut self.walker)?);
         }
     }
+}
+
+/// A fixed firmware reservation, in physical bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reservation {
+    pub base: u64,
+    pub size: u64,
+    pub no_map: bool,
+}
+
+/// Read the DTB reservation block and the enabled static children of
+/// `/reserved-memory`. Both sources may describe the same physical bytes.
+pub fn reservations(fdt: &Fdt) -> impl Iterator<Item = Reservation> + '_ {
+    let header = fdt
+        .reservation_entries()
+        .iter()
+        .map(|entry| Reservation {
+            base: u64::from_be_bytes(entry[..8].try_into().unwrap()),
+            size: u64::from_be_bytes(entry[8..].try_into().unwrap()),
+            no_map: false,
+        })
+        .take_while(|r| r.base != 0 || r.size != 0)
+        .filter(|r| r.size != 0);
+
+    let mut parent = fdt.lookup("/reserved-memory");
+    let depth = parent.depth();
+    let enabled = |node: FdtWalker<'_>| {
+        node.prop("status")
+            .is_none_or(|v| matches!(v.into_str(), Some("ok" | "okay")))
+    };
+    let active = enabled(parent.clone());
+    let children = core::iter::from_fn(move || {
+        if !active {
+            return None;
+        }
+        while let Some(token) = parent.next() {
+            if matches!(token, FdtToken::Node(_))
+                && parent.depth() == depth + 1
+                && enabled(parent.clone())
+            {
+                let (ac, sc) = parent.reg_cells();
+                if let Some(reg) = parent.clone().prop("reg") {
+                    let no_map = parent.clone().prop("no-map").is_some();
+                    return Some(reg.into_reg(ac, sc).map(move |(base, size)| Reservation {
+                        base,
+                        size: size.expect("zero reserved-memory size").get(),
+                        no_map,
+                    }));
+                }
+                assert!(
+                    parent.clone().prop("size").is_none(),
+                    "dynamic reserved-memory allocation is unsupported"
+                );
+            }
+        }
+        None
+    })
+    .flatten();
+    header.chain(children)
 }
 
 #[cfg(test)]

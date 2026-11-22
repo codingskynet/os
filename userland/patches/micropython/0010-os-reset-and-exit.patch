@@ -1,0 +1,103 @@
+From b022f07b3ca42aefd1ff4fb8039999bd33adde8f Mon Sep 17 00:00:00 2001
+From: Codex <codex@localhost>
+Date: Sun, 22 Nov 2026 00:09:49 +0900
+Subject: [PATCH] os: expose board reset and return the REPL exit status
+
+---
+ ports/os/Makefile       |  3 ++-
+ ports/os/main.c         |  4 ++--
+ ports/os/modmachine.c   | 20 ++++++++++++++++++++
+ ports/os/mpconfigport.h |  3 ++-
+ ports/os/os_syscall.h   |  1 +
+ 5 files changed, 27 insertions(+), 4 deletions(-)
+ create mode 100644 ports/os/modmachine.c
+
+diff --git a/ports/os/Makefile b/ports/os/Makefile
+index 54ba8c0..813e8f4 100644
+--- a/ports/os/Makefile
++++ b/ports/os/Makefile
+@@ -88,6 +88,7 @@ CXXFLAGS += $(filter-out -std=c99,$(CFLAGS))
+ SRC_C = \
+ 	main.c \
+ 	math_shims.c \
++	modmachine.c \
+ 	modsmp.c \
+ 	uart_core.c \
+ 	shared/libc/printf.c \
+@@ -104,7 +105,7 @@ else
+ SRC_S_LOWER = shared/runtime/gchelper_rv64i.s
+ endif
+ 
+-SRC_QSTR += modsmp.c shared/readline/readline.c shared/runtime/pyexec.c
++SRC_QSTR += modmachine.c modsmp.c shared/readline/readline.c shared/runtime/pyexec.c
+ 
+ LIBM_SRC_C += $(filter-out lib/libm_dbl/copysign.c,$(SRC_LIB_LIBM_DBL_C))
+ LIBM_SRC_C += $(SRC_LIB_LIBM_DBL_SQRT_SW_C)
+diff --git a/ports/os/main.c b/ports/os/main.c
+index 8f8e162..6178206 100644
+--- a/ports/os/main.c
++++ b/ports/os/main.c
+@@ -60,9 +60,9 @@ int main(void) {
+     gc_init(heap, heap + sizeof(heap));
+     mp_init();
+     mp_obj_list_append(mp_sys_path, mp_obj_new_str("/lib", 4));
+-    pyexec_friendly_repl();
++    int status = pyexec_friendly_repl();
+     mp_deinit();
+-    return 0;
++    return status & 0xff;
+ }
+ 
+ void gc_collect(void) {
+diff --git a/ports/os/modmachine.c b/ports/os/modmachine.c
+new file mode 100644
+index 0000000..8bf81f5
+--- /dev/null
++++ b/ports/os/modmachine.c
+@@ -0,0 +1,20 @@
++#include "py/runtime.h"
++#include "os_syscall.h"
++
++static mp_obj_t machine_reset(void) {
++    os_syscall_result_t result = os_syscall(OS_SYSCALL_REBOOT, 0, 0, 0);
++    mp_raise_OSError(result.status);
++}
++static MP_DEFINE_CONST_FUN_OBJ_0(machine_reset_obj, machine_reset);
++
++static const mp_rom_map_elem_t machine_globals_table[] = {
++    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_machine) },
++    { MP_ROM_QSTR(MP_QSTR_reset), MP_ROM_PTR(&machine_reset_obj) },
++};
++static MP_DEFINE_CONST_DICT(machine_globals, machine_globals_table);
++
++const mp_obj_module_t machine_module = {
++    .base = { &mp_type_module },
++    .globals = (mp_obj_dict_t *)&machine_globals,
++};
++MP_REGISTER_MODULE(MP_QSTR_machine, machine_module);
+diff --git a/ports/os/mpconfigport.h b/ports/os/mpconfigport.h
+index 4c4eda3..3d45cff 100644
+--- a/ports/os/mpconfigport.h
++++ b/ports/os/mpconfigport.h
+@@ -31,7 +31,8 @@
+ // Keep argv disabled, but expose sys.path so read-only modules in the init
+ // archive can be discovered below /lib.
+ #define MICROPY_PY_SYS_MODULES            (0)
+-#define MICROPY_PY_SYS_EXIT               (0)
++#define MICROPY_PY_SYS_EXIT               (1)
++#define MICROPY_PYEXEC_ENABLE_EXIT_CODE_HANDLING (1)
+ #define MICROPY_PY_SYS_PATH               (1)
+ #define MICROPY_PY_SYS_ARGV               (0)
+ 
+diff --git a/ports/os/os_syscall.h b/ports/os/os_syscall.h
+index cfea2ce..d912ce3 100644
+--- a/ports/os/os_syscall.h
++++ b/ports/os/os_syscall.h
+@@ -11,6 +11,7 @@ enum {
+     OS_SYSCALL_OPEN = 3,
+     OS_SYSCALL_CLOSE = 4,
+     OS_SYSCALL_HART_ID = 5,
++    OS_SYSCALL_REBOOT = 7,
+ };
+ 
+ enum {

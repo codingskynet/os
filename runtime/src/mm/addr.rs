@@ -112,8 +112,8 @@ impl Pa {
         Va(self.0.checked_add(DIRECT_VMA_BASE).expect("invalid Pa"))
     }
 
-    pub const fn into_kernel_va(self) -> Va {
-        Va(self.0.checked_add(KERNEL_VMA_OFFSET).expect("invalid Pa"))
+    pub fn into_kernel_va(self) -> Va {
+        Va(self.0.checked_add(kernel_vma_offset()).expect("invalid Pa"))
     }
 
     pub const fn as_raw(&self) -> usize {
@@ -218,7 +218,7 @@ impl Va {
                 panic!("userspace VA cannot be directly converted")
             }
             DIRECT_VMA_BASE..DIRECT_VMA_END => self.0.checked_sub(DIRECT_VMA_BASE),
-            KERNEL_VMA_BASE.. => self.0.checked_sub(KERNEL_VMA_OFFSET),
+            KERNEL_VMA_BASE.. => self.0.checked_sub(kernel_vma_offset()),
             _ => panic!("Undefined VA"),
         }
         .expect("Invalid Va");

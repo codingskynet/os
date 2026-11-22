@@ -112,6 +112,12 @@ impl Console {
         );
     }
 
+    pub fn flush_output() {
+        if let Some(backend) = CONSOLE.lock().backend.as_mut() {
+            backend.flush_output();
+        }
+    }
+
     pub fn enable_rx_interrupt() {
         CONSOLE
             .lock()
@@ -127,7 +133,7 @@ impl Console {
             let backend = console.backend.as_mut().expect("console is not installed");
             let rx = &mut console.rx;
             let mut received = false;
-            backend.drain_rx(&mut |byte| {
+            backend.drain_rx(rx.free_space(), &mut |byte| {
                 // Always consume the UART RBR so its level-triggered source can
                 // deassert. Preserve older queued input if the software ring is full.
                 received = true;

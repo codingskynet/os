@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
@@ -21,12 +22,12 @@ pub mod util;
 
 // Driver parsers share the runtime interfaces without compiling kernel assembly.
 extern crate self as runtime;
-#[path = "../../driver/src/discovery.rs"]
+#[path = "../../runtime/src/dev/discovery.rs"]
 pub mod discovery;
-#[path = "../../driver/src/interrupt/plic.rs"]
+#[path = "../../driver/src/interrupt/plic/registers.rs"]
 pub mod plic;
 
-#[path = "../../driver/src/interrupt/routes.rs"]
+#[path = "../../runtime/src/dev/routes.rs"]
 pub mod irq_routes;
 
 #[path = "../../runtime/src/mm/mmio/layout.rs"]
@@ -35,3 +36,7 @@ pub mod mmio_layout;
 #[path = "../../runtime/src/mm/addr.rs"]
 pub mod addr;
 pub mod arch;
+
+#[cfg(test)]
+#[path = "../../board/driver_gen.rs"]
+mod driver_gen;

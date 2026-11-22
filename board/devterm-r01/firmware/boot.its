@@ -1,0 +1,44 @@
+/dts-v1/;
+/ {
+	description = "DevTerm R-01 OS";
+	#address-cells = <1>;
+	images {
+		opensbi {
+			description = "OpenSBI fw_dynamic";
+			type = "firmware";
+			os = "opensbi";
+			arch = "riscv";
+			compression = "none";
+			load = <0x40000000>;
+			entry = <0x40000000>;
+			data = /incbin/("fw_dynamic.bin");
+		};
+		kernel {
+			description = "Rust OS with embedded initarfs";
+			type = "standalone";
+			/* SPL's direct S-mode payload ABI. */
+			os = "linux";
+			arch = "riscv";
+			compression = "none";
+			load = <@KERNEL_LOAD@>;
+			entry = <@KERNEL_LOAD@>;
+			data = /incbin/("kernel.bin");
+		};
+		fdt {
+			description = "Clockwork DevTerm R-01";
+			type = "flat_dt";
+			compression = "none";
+			load = <0x48000000>;
+			data = /incbin/("devterm.dtb");
+		};
+	};
+	configurations {
+		default = "devterm";
+		devterm {
+			description = "sun20i-d1-devterm-v3.14";
+			firmware = "opensbi";
+			loadables = "kernel";
+			fdt = "fdt";
+		};
+	};
+};

@@ -27,7 +27,6 @@ edition = "2024"
 
 [workspace.dependencies]
 runtime = { path = "runtime" }
-driver = { path = "driver", default-features = false }
 
 arrayvec = { version = "0.7.7", default-features = false }
 bitflags = { version = "2.13.0", default-features = false }
@@ -40,3 +39,8 @@ hashbrown = { version = "0.17.1", default-features = false, features = ["default
 tar-no-std = { version = "0.4.2", default-features = false }
 thiserror = { version = "2", default-features = false }
 winnow = { version = "1.0.3", default-features = false, features = ["binary"] }
+
+# Shared driver source generator (host build dependencies).
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

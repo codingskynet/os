@@ -1,14 +1,12 @@
-# QEMU virt build target
+# QEMU virt
 
-This executable depends on the shared `boot` library and enables the `driver`
-features `ns16550`, `plic`, and `riscv-sstc`. The current Sstc implementation
-supports RV64 and requires firmware to permit supervisor access to time/stimecmp.
+This RV64 target boots MicroPython on the emulated serial console. After the
+[initial setup](../../README.md#run-in-qemu), run one of these from the repository root.
 
-Build with `cargo build -p board-qemu-virt --release` from the workspace root,
-or use `make run` to build userland and boot QEMU. This board is the workspace
-default member. Optional boot features use `--features boot/smoke` (or
-`make run FEATURES=smoke`). The shared `board/build.rs` supplies the
-architecture-specific linker script and memory-layout symbols.
+| Command | Purpose |
+| --- | --- |
+| `make run` | Boot the release kernel |
+| `make run DEBUG=1` | Boot with kernel debug assertions |
+| `make run FEATURES=smoke` | Boot with the smoke tests enabled |
 
-The board supplies no device initialization code. FDT selects the console,
-interrupt controller, and timer independently from the included drivers.
+To exit QEMU from the serial console, press Ctrl-A, then X.

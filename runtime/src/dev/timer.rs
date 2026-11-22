@@ -29,3 +29,9 @@ pub fn install(device: &'static dyn TimerDevice) {
 pub fn device() -> &'static dyn TimerDevice {
     *DEVICE
 }
+
+/// Dispatch an external timer IRQ and report whether scheduling is needed.
+/// The installed IRQ route retains this callback after boot memory is reclaimed.
+pub fn handle_interrupt() -> bool {
+    device().take_event() && crate::kernel::tick::on_tick()
+}
